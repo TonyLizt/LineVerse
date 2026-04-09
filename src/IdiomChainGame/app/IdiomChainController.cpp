@@ -126,6 +126,7 @@ void IdiomChainController::startSingleGame(GameMode mode, const std::string& pla
     refreshMediumOptions();
     g_timer.reset();
     pendingRecordFlush_ = false;
+    lastHeartbeatSentSeconds_ = -1.0;
 }
 
 bool IdiomChainController::hostBattle(GameMode mode, const std::string& playerName, unsigned short port) {
@@ -147,7 +148,7 @@ bool IdiomChainController::hostBattle(GameMode mode, const std::string& playerNa
     session_.battleRoundStarted = false;
     pendingBattleMode_ = mode;
     pendingRecordFlush_ = false;
-
+    lastHeartbeatSentSeconds_ = -1.0;
     if (!battleTransport_->host(port)) {
         lastMessage_ = "创建房间失败。";
         return false;
@@ -175,6 +176,7 @@ bool IdiomChainController::joinBattle(GameMode mode, const std::string& playerNa
     session_.battleRoundStarted = false;
     pendingBattleMode_ = mode;
     pendingRecordFlush_ = false;
+    lastHeartbeatSentSeconds_ = -1.0;
 
     if (!battleTransport_->connectTo(ip, port)) {
         lastMessage_ = "连接房主失败。";
@@ -193,15 +195,26 @@ bool IdiomChainController::joinBattle(GameMode mode, const std::string& playerNa
 }
 
 void IdiomChainController::leaveBattle() {
+    if (battleTransport_ && isBattleMode(session_.mode) && session_.battleConnected) {
+        battleTransport_->send("LEAVE|" + session_.playerName);
+    }
+
     if (battleTransport_) {
         battleTransport_->stop();
     }
+
     if (isBattleMode(session_.mode)) {
         session_.battleConnected = false;
         session_.battleRoundStarted = false;
         session_.remotePlayerName.clear();
         session_.remotePath.clear();
         session_.battleWinnerText.clear();
+        session_.remoteFinished = false;
+        session_.remoteSuccess = false;
+        session_.remoteStepCount = 0;
+        session_.remoteElapsedSeconds = 0.0;
+        session_.remoteScore = 0;
+        lastMessage_ = "已退出房间。";
     }
 }
 
@@ -227,8 +240,18 @@ void IdiomChainController::tick() {
     if (isBattleMode(session_.mode)) {
         pollBattle();
     }
+
     if (!session_.finished && (!isBattleMode(session_.mode) || session_.battleRoundStarted)) {
         updateElapsedSeconds();
+    }
+
+    // battle 中对局开始后，定时同步状态，保证对手端时间实时刷新
+    if (isBattleMode(session_.mode) && session_.battleConnected && session_.battleRoundStarted) {
+        if (lastHeartbeatSentSeconds_ < 0.0
+            || session_.elapsedSeconds - lastHeartbeatSentSeconds_ >= heartbeatIntervalSeconds_) {
+            sendBattleState();
+            lastHeartbeatSentSeconds_ = session_.elapsedSeconds;
+        }
     }
 }
 
@@ -603,7 +626,7 @@ std::optional<std::string> IdiomChainController::requestHint() {
     }
 
     session_.hintCount += 1;
-    if (isHardMode(session_.mode)) {
+    if (isMediumMode(session_.mode) || isHardMode(session_.mode)) {
         session_.stepCount += 1;
     }
 
@@ -690,6 +713,7 @@ void IdiomChainController::prepareFixedBattleSession(GameMode mode, int startId,
     session_.battleRoundStarted = true;
     lastMessage_ = "对战已开始，请尽快完成。";
     g_timer.reset();
+    lastHeartbeatSentSeconds_ = -1.0;
 }
 
 void IdiomChainController::initializeSessionForQuestion(GameMode mode, int startId, int targetId, bool generateEasyPool) {
@@ -1003,6 +1027,22 @@ void IdiomChainController::handleBattleMessage(const std::string& message) {
         updateBattleWinnerText();
         return;
     }
+
+    if (parts[0] == "LEAVE") {
+        session_.battleConnected = false;
+        session_.battleRoundStarted = false;
+        session_.remoteFinished = false;
+        session_.remoteSuccess = false;
+        session_.battleWinnerText.clear();
+
+        if (parts.size() >= 2) {
+            session_.remotePlayerName = parts[1];
+            lastMessage_ = parts[1] + " 已离开房间。";
+        } else {
+            lastMessage_ = "对手已离开房间。";
+        }
+        return;
+    }
 }
 
 void IdiomChainController::startHostBattleRound() {
@@ -1022,6 +1062,7 @@ void IdiomChainController::startHostBattleRound() {
     session_.battleRoundStarted = true;
     session_.battleIsHost = true;
     g_timer.reset();
+    lastHeartbeatSentSeconds_ = -1.0;
 
     std::ostringstream startMsg;
     startMsg << "START|"

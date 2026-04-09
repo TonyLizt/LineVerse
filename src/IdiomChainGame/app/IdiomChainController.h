@@ -79,6 +79,8 @@ private:
 
     // battle helpers
     bool answerRevealedThisRound_ { false };
+    double lastHeartbeatSentSeconds_ { -1.0 };
+    double heartbeatIntervalSeconds_ { 0.2 };
     void sendBattleState();
     void handleBattleMessage(const std::string& message);
     void startHostBattleRound();

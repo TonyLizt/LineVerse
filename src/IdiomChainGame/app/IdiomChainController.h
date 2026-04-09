@@ -56,7 +56,7 @@ public:
     std::vector<std::string> getHardCandidateWords(const std::string& query) const;
     bool rollbackOneStep();
     std::optional<std::string> requestHint();
-    PathResult revealAnswer() const;
+    PathResult revealAnswer();
     const std::string& getLastMessage() const;
     void flushPendingRecord();
     std::string wordOf(int idiomId) const;
@@ -78,6 +78,7 @@ private:
     bool isInputValidNext(int nextId);
 
     // battle helpers
+    bool answerRevealedThisRound_ { false };
     void sendBattleState();
     void handleBattleMessage(const std::string& message);
     void startHostBattleRound();

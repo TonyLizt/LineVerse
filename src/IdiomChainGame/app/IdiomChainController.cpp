@@ -301,7 +301,7 @@ bool IdiomChainController::submitEasyOrder(const std::vector<int>& orderedPoolIn
     session_.success = true;
 
     const ScoreCalculator calculator;
-    session_.score = calculator.calculate(session_);
+    session_.score = answerRevealedThisRound_ ? 0 : calculator.calculate(session_);
     saveRecordIfNeeded();
     lastMessage_ = isBattleMode(session_.mode) ? "本方已完成对局，等待对手。" : "简单模式已完成。";
     if (isBattleMode(session_.mode)) {
@@ -312,7 +312,7 @@ bool IdiomChainController::submitEasyOrder(const std::vector<int>& orderedPoolIn
 }
 
 std::vector<int> IdiomChainController::getMediumOptions() const {
-    return computeMediumOptionsInternal();
+    return session_.mediumOptions;
 }
 
 std::vector<std::string> IdiomChainController::getMediumOptionWords() const {
@@ -614,7 +614,9 @@ std::optional<std::string> IdiomChainController::requestHint() {
     return wordOf(hintId);
 }
 
-PathResult IdiomChainController::revealAnswer() const {
+PathResult IdiomChainController::revealAnswer() {
+    answerRevealedThisRound_ = true;
+    lastMessage_ = "已查看最优解，本局得分记为0。";
     return solver_.solveShortestPath(session_.startId, session_.targetId);
 }
 
@@ -684,6 +686,7 @@ void IdiomChainController::prepareSession(IModeStrategy& strategy) {
 
 void IdiomChainController::prepareFixedBattleSession(GameMode mode, int startId, int targetId) {
     initializeSessionForQuestion(mode, startId, targetId, true);
+    refreshMediumOptions();
     session_.battleRoundStarted = true;
     lastMessage_ = "对战已开始，请尽快完成。";
     g_timer.reset();
@@ -773,7 +776,7 @@ void IdiomChainController::finalizeIfTargetReached() {
         session_.finished = true;
         session_.success = true;
         const ScoreCalculator calculator;
-        session_.score = calculator.calculate(session_);
+        session_.score = answerRevealedThisRound_ ? 0 : calculator.calculate(session_);
         lastMessage_ = isBattleMode(session_.mode) ? "已到达终点，等待对手完成。" : "已成功到达终点。";
         saveRecordIfNeeded();
         return;
@@ -1014,6 +1017,7 @@ void IdiomChainController::startHostBattleRound() {
     }
 
     prepareSession(*strategy);
+    refreshMediumOptions();
     session_.battleConnected = true;
     session_.battleRoundStarted = true;
     session_.battleIsHost = true;

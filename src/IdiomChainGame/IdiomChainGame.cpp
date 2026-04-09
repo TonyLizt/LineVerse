@@ -7,6 +7,7 @@
 #include "core/PathSolver.h"
 #include "data/CsvIdiomRepository.h"
 #include "data/RecordRepository.h"
+#include "net/AsioBattleTransport.h"
 #include "ui/IdiomChainScene.h"
 
 #include <iostream>
@@ -30,7 +31,6 @@ int IdiomChainGame::start() {
 }
 
 int IdiomChainGame::loadAssets() {
-    // Console version: no external assets are required yet.
     return 0;
 }
 
@@ -51,13 +51,14 @@ int IdiomChainGame::loadData() {
     solver_ = std::make_unique<PathSolver>(*graph_);
     hintEngine_ = std::make_unique<HintEngine>(*graph_, *solver_);
     recordRepository_ = std::make_unique<RecordRepository>();
+    battleTransport_ = std::make_unique<AsioBattleTransport>();
 
     return 0;
 }
 
 int IdiomChainGame::initGame() {
     controller_ = std::make_unique<IdiomChainController>(
-        *repository_, *graph_, *solver_, *hintEngine_, *recordRepository_);
+        *repository_, *graph_, *solver_, *hintEngine_, *recordRepository_, battleTransport_.get());
     scene_ = std::make_unique<IdiomChainScene>(*controller_);
     return 0;
 }
@@ -76,6 +77,7 @@ int IdiomChainGame::saveResult() {
 void IdiomChainGame::cleanup() {
     scene_.reset();
     controller_.reset();
+    battleTransport_.reset();
     recordRepository_.reset();
     hintEngine_.reset();
     solver_.reset();

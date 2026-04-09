@@ -5,45 +5,49 @@
 #include "../core/ModeStrategy.h"
 #include "../core/ScoreCalculator.h"
 #include "../data/IIdiomRepository.h"
+#include "../net/IBattleTransport.h"
 
 #include <algorithm>
 #include <chrono>
-#include <memory>
 #include <cctype>
+#include <limits>
+#include <memory>
 #include <random>
+#include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace {
 
-/**
- * @brief Convert game mode to persistent text.
- * @param mode Game mode.
- * @return Mode text.
- */
 std::string modeToText(GameMode mode) {
     switch (mode) {
-    case GameMode::SingleEasy:
-        return "Easy";
-    case GameMode::SingleMedium:
-        return "Medium";
-    case GameMode::SingleHard:
-        return "Hard";
-    case GameMode::BattleEasy:
-        return "BattleEasy";
-    case GameMode::BattleMedium:
-        return "BattleMedium";
-    case GameMode::BattleHard:
-        return "BattleHard";
+    case GameMode::SingleEasy:   return "简单模式";
+    case GameMode::SingleMedium: return "中等模式";
+    case GameMode::SingleHard:   return "困难模式";
+    case GameMode::BattleEasy:   return "对战简单模式";
+    case GameMode::BattleMedium: return "对战中等模式";
+    case GameMode::BattleHard:   return "对战困难模式";
     }
-    return "Unknown";
+    return "未知模式";
 }
 
-/**
- * @brief Convert ASCII letters to lowercase.
- * @param text Input text.
- * @return Lowercased text.
- */
+bool isEasyMode(GameMode mode) {
+    return mode == GameMode::SingleEasy || mode == GameMode::BattleEasy;
+}
+
+bool isMediumMode(GameMode mode) {
+    return mode == GameMode::SingleMedium || mode == GameMode::BattleMedium;
+}
+
+bool isHardMode(GameMode mode) {
+    return mode == GameMode::SingleHard || mode == GameMode::BattleHard;
+}
+
+bool isBattleMode(GameMode mode) {
+    return mode == GameMode::BattleEasy || mode == GameMode::BattleMedium || mode == GameMode::BattleHard;
+}
+
 std::string toLowerAscii(std::string text) {
     for (char& ch : text) {
         ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -51,12 +55,6 @@ std::string toLowerAscii(std::string text) {
     return text;
 }
 
-/**
- * @brief Check whether haystack contains needle using ASCII-lower comparison.
- * @param haystack Full text.
- * @param needle Query text.
- * @return True when contained.
- */
 bool containsInsensitive(const std::string& haystack, const std::string& needle) {
     if (needle.empty()) {
         return true;
@@ -66,22 +64,22 @@ bool containsInsensitive(const std::string& haystack, const std::string& needle)
     return loweredHaystack.find(loweredNeedle) != std::string::npos;
 }
 
-/**
- * @brief Lightweight timer holder for one active round.
- */
+std::vector<std::string> split(const std::string& text, char delim) {
+    std::vector<std::string> parts;
+    std::stringstream ss(text);
+    std::string item;
+    while (std::getline(ss, item, delim)) {
+        parts.push_back(item);
+    }
+    return parts;
+}
+
 class TimerHolder {
 public:
-    /**
-     * @brief Reset start point to current time.
-     */
     void reset() {
         start_ = std::chrono::steady_clock::now();
     }
 
-    /**
-     * @brief Get elapsed seconds since the last reset.
-     * @return Elapsed time in seconds.
-     */
     double elapsedSeconds() const {
         const auto diff = std::chrono::steady_clock::now() - start_;
         return std::chrono::duration_cast<std::chrono::duration<double>>(diff).count();
@@ -100,12 +98,14 @@ IdiomChainController::IdiomChainController(
     const IdiomGraph& graph,
     const PathSolver& solver,
     const HintEngine& hintEngine,
-    RecordRepository& recordRepository)
+    RecordRepository& recordRepository,
+    IBattleTransport* battleTransport)
     : repository_(repository)
     , graph_(graph)
     , solver_(solver)
     , hintEngine_(hintEngine)
-    , recordRepository_(recordRepository) {
+    , recordRepository_(recordRepository)
+    , battleTransport_(battleTransport) {
 }
 
 void IdiomChainController::startSingleGame(GameMode mode, const std::string& playerName) {
@@ -114,9 +114,9 @@ void IdiomChainController::startSingleGame(GameMode mode, const std::string& pla
     session_.mode = mode;
 
     std::unique_ptr<IModeStrategy> strategy;
-    if (mode == GameMode::SingleEasy) {
+    if (isEasyMode(mode)) {
         strategy = std::make_unique<EasyModeStrategy>();
-    } else if (mode == GameMode::SingleMedium) {
+    } else if (isMediumMode(mode)) {
         strategy = std::make_unique<MediumModeStrategy>();
     } else {
         strategy = std::make_unique<HardModeStrategy>();
@@ -128,8 +128,106 @@ void IdiomChainController::startSingleGame(GameMode mode, const std::string& pla
     pendingRecordFlush_ = false;
 }
 
+bool IdiomChainController::hostBattle(GameMode mode, const std::string& playerName, unsigned short port) {
+    if (!battleTransport_) {
+        lastMessage_ = "当前构建未注入联网传输层。";
+        return false;
+    }
+    if (!isBattleMode(mode)) {
+        lastMessage_ = "房主模式必须使用对战难度。";
+        return false;
+    }
+    leaveBattle();
+
+    session_ = GameSession{};
+    session_.playerName = playerName;
+    session_.mode = mode;
+    session_.battleIsHost = true;
+    session_.battleConnected = false;
+    session_.battleRoundStarted = false;
+    pendingBattleMode_ = mode;
+    pendingRecordFlush_ = false;
+
+    if (!battleTransport_->host(port)) {
+        lastMessage_ = "创建房间失败。";
+        return false;
+    }
+    lastMessage_ = "已创建房间，等待对手连接。";
+    return true;
+}
+
+bool IdiomChainController::joinBattle(GameMode mode, const std::string& playerName, const std::string& ip, unsigned short port) {
+    if (!battleTransport_) {
+        lastMessage_ = "当前构建未注入联网传输层。";
+        return false;
+    }
+    if (!isBattleMode(mode)) {
+        lastMessage_ = "加入房间时必须选择对战难度。";
+        return false;
+    }
+    leaveBattle();
+
+    session_ = GameSession{};
+    session_.playerName = playerName;
+    session_.mode = mode;
+    session_.battleIsHost = false;
+    session_.battleConnected = false;
+    session_.battleRoundStarted = false;
+    pendingBattleMode_ = mode;
+    pendingRecordFlush_ = false;
+
+    if (!battleTransport_->connectTo(ip, port)) {
+        lastMessage_ = "连接房主失败。";
+        return false;
+    }
+
+    const std::string hello = "HELLO|" + playerName + "|" + std::to_string(static_cast<int>(mode));
+    if (!battleTransport_->send(hello)) {
+        battleTransport_->stop();
+        lastMessage_ = "已连接网络，但发送握手失败。";
+        return false;
+    }
+
+    lastMessage_ = "正在连接房主，等待题目同步。";
+    return true;
+}
+
+void IdiomChainController::leaveBattle() {
+    if (battleTransport_) {
+        battleTransport_->stop();
+    }
+    if (isBattleMode(session_.mode)) {
+        session_.battleConnected = false;
+        session_.battleRoundStarted = false;
+        session_.remotePlayerName.clear();
+        session_.remotePath.clear();
+        session_.battleWinnerText.clear();
+    }
+}
+
+bool IdiomChainController::isBattleConnected() const {
+    return session_.battleConnected;
+}
+
+bool IdiomChainController::isBattleRoundStarted() const {
+    return session_.battleRoundStarted;
+}
+
+void IdiomChainController::pollBattle() {
+    if (!battleTransport_) {
+        return;
+    }
+    std::string message;
+    while (battleTransport_->poll(message)) {
+        handleBattleMessage(message);
+    }
+}
+
 void IdiomChainController::tick() {
-    if (!session_.finished) {
+    if (isBattleMode(session_.mode)) {
+        pollBattle();
+    }
+    if (!session_.finished && (!isBattleMode(session_.mode) || session_.battleRoundStarted)) {
         updateElapsedSeconds();
     }
 }
@@ -152,7 +250,7 @@ std::vector<std::string> IdiomChainController::getEasyPoolWords() const {
 }
 
 bool IdiomChainController::submitEasyOrder(const std::vector<int>& orderedPoolIndexes) {
-    if (session_.mode != GameMode::SingleEasy) {
+    if (!isEasyMode(session_.mode)) {
         return false;
     }
 
@@ -165,12 +263,12 @@ bool IdiomChainController::submitEasyOrder(const std::vector<int>& orderedPoolIn
     std::unordered_set<int> used;
     for (int poolIndex : orderedPoolIndexes) {
         if (poolIndex < 0 || static_cast<std::size_t>(poolIndex) >= session_.easyPool.size()) {
-            lastMessage_ = "Index out of range.";
+            lastMessage_ = "排序索引超出范围。";
             return false;
         }
         const int idiomId = session_.easyPool[static_cast<std::size_t>(poolIndex)];
         if (!used.insert(idiomId).second) {
-            lastMessage_ = "Duplicate indices are not allowed.";
+            lastMessage_ = "排序结果中存在重复项。";
             return false;
         }
         candidatePath.push_back(idiomId);
@@ -179,7 +277,7 @@ bool IdiomChainController::submitEasyOrder(const std::vector<int>& orderedPoolIn
     if (candidatePath.empty()
         || candidatePath.front() != session_.startId
         || candidatePath.back() != session_.targetId) {
-        lastMessage_ = "Path must start with the start idiom and end with the target idiom.";
+        lastMessage_ = "路径必须以起点成语开始，并以终点成语结束。";
         return false;
     }
 
@@ -193,7 +291,7 @@ bool IdiomChainController::submitEasyOrder(const std::vector<int>& orderedPoolIn
     }
 
     if (!valid) {
-        lastMessage_ = "Selected order does not form a valid chain.";
+        lastMessage_ = "当前排序无法构成合法接龙路径。";
         return false;
     }
 
@@ -205,7 +303,11 @@ bool IdiomChainController::submitEasyOrder(const std::vector<int>& orderedPoolIn
     const ScoreCalculator calculator;
     session_.score = calculator.calculate(session_);
     saveRecordIfNeeded();
-    lastMessage_ = "Easy mode solved.";
+    lastMessage_ = isBattleMode(session_.mode) ? "本方已完成对局，等待对手。" : "简单模式已完成。";
+    if (isBattleMode(session_.mode)) {
+        sendBattleState();
+        updateBattleWinnerText();
+    }
     return true;
 }
 
@@ -238,7 +340,7 @@ std::vector<int> IdiomChainController::getMediumOptionDistances() const {
 }
 
 bool IdiomChainController::submitMediumChoice(int optionIndex) {
-    if (session_.mode != GameMode::SingleMedium) {
+    if (!isMediumMode(session_.mode)) {
         return false;
     }
 
@@ -251,13 +353,17 @@ bool IdiomChainController::submitMediumChoice(int optionIndex) {
     if (options.empty()) {
         session_.finished = true;
         session_.success = false;
-        lastMessage_ = "No available reachable options. This round is lost.";
+        lastMessage_ = "当前没有可到达终点的可选项，本局失败。";
         saveRecordIfNeeded();
+        if (isBattleMode(session_.mode)) {
+            sendBattleState();
+            updateBattleWinnerText();
+        }
         return false;
     }
 
     if (optionIndex < 0 || static_cast<std::size_t>(optionIndex) >= options.size()) {
-        lastMessage_ = "Invalid option index.";
+        lastMessage_ = "所选项索引无效。";
         return false;
     }
 
@@ -273,21 +379,24 @@ bool IdiomChainController::submitMediumChoice(int optionIndex) {
     finalizeIfTargetReached();
     if (!session_.finished) {
         refreshMediumOptions();
-        lastMessage_ = "Choice accepted.";
+        lastMessage_ = "已提交该步选择。";
+    }
+    if (isBattleMode(session_.mode)) {
+        sendBattleState();
+        updateBattleWinnerText();
     }
     return true;
 }
 
-
 bool IdiomChainController::submitMediumChoiceById(int idiomId) {
-    if (session_.mode != GameMode::SingleMedium) {
+    if (!isMediumMode(session_.mode)) {
         return false;
     }
 
     const std::vector<int>& options = session_.mediumOptions;
     auto it = std::find(options.begin(), options.end(), idiomId);
     if (it == options.end()) {
-        lastMessage_ = "Selected idiom is not in current options.";
+        lastMessage_ = "所选成语不在当前四个选项中。";
         return false;
     }
 
@@ -295,7 +404,7 @@ bool IdiomChainController::submitMediumChoiceById(int idiomId) {
 }
 
 bool IdiomChainController::submitHardInput(const std::string& inputWordOrAbbreviation) {
-    if (session_.mode != GameMode::SingleHard) {
+    if (!isHardMode(session_.mode)) {
         return false;
     }
 
@@ -306,7 +415,7 @@ bool IdiomChainController::submitHardInput(const std::string& inputWordOrAbbrevi
 
     const int nextId = graph_.getIdByWord(inputWordOrAbbreviation);
     if (nextId < 0) {
-        lastMessage_ = "Idiom not found (you may also type abbreviation).";
+        lastMessage_ = "未找到对应成语，可尝试输入完整成语或缩写。";
         return false;
     }
     if (!isInputValidNext(nextId)) {
@@ -319,14 +428,18 @@ bool IdiomChainController::submitHardInput(const std::string& inputWordOrAbbrevi
 
     finalizeIfTargetReached();
     if (!session_.finished) {
-        lastMessage_ = "Step accepted.";
+        lastMessage_ = "已提交一步。";
+    }
+    if (isBattleMode(session_.mode)) {
+        sendBattleState();
+        updateBattleWinnerText();
     }
     return true;
 }
 
 std::vector<std::string> IdiomChainController::getHardCandidateWords(const std::string& query) const {
     std::vector<std::string> words;
-    if (session_.mode != GameMode::SingleHard || session_.playerPath.empty()) {
+    if (!isHardMode(session_.mode) || session_.playerPath.empty()) {
         return words;
     }
 
@@ -407,12 +520,12 @@ std::vector<std::string> IdiomChainController::getHardCandidateWords(const std::
 }
 
 bool IdiomChainController::rollbackOneStep() {
-    if (session_.mode == GameMode::SingleEasy) {
-        lastMessage_ = "Easy mode does not support rollback.";
+    if (isEasyMode(session_.mode)) {
+        lastMessage_ = "简单模式不支持撤回。";
         return false;
     }
     if (session_.playerPath.size() <= 1U) {
-        lastMessage_ = "Nothing to rollback.";
+        lastMessage_ = "当前没有可撤回的步骤。";
         return false;
     }
 
@@ -422,37 +535,83 @@ bool IdiomChainController::rollbackOneStep() {
     }
     session_.rollbackCount += 1;
     session_.stepCount += 1;
-    if (session_.mode == GameMode::SingleMedium) {
+    if (isMediumMode(session_.mode)) {
         refreshMediumOptions();
     }
-    lastMessage_ = "Rolled back one step.";
+    lastMessage_ = "已撤回一步。";
+    if (isBattleMode(session_.mode)) {
+        sendBattleState();
+    }
     return true;
 }
 
 std::optional<std::string> IdiomChainController::requestHint() {
-    if (session_.mode == GameMode::SingleEasy) {
-        lastMessage_ = "Easy mode does not use hints.";
+    if (isEasyMode(session_.mode)) {
+        lastMessage_ = "简单模式不提供提示。";
         return std::nullopt;
     }
-    if (session_.mode == GameMode::SingleHard && session_.hintCount >= session_.maxHints) {
-        lastMessage_ = "No hints remaining.";
+    if (isHardMode(session_.mode) && session_.hintCount >= session_.maxHints) {
+        lastMessage_ = "提示次数已用完。";
         return std::nullopt;
     }
 
-    const int currentId = session_.playerPath.back();
-    const std::optional<int> nextId = hintEngine_.suggestNextStep(currentId, session_.targetId);
-    if (!nextId.has_value()) {
-        lastMessage_ = "No hint available.";
+    if (session_.playerPath.empty()) {
+        lastMessage_ = "当前没有可供提示的路径状态。";
         return std::nullopt;
+    }
+
+    int hintId = -1;
+
+    if (isMediumMode(session_.mode)) {
+        const std::vector<int>& options = session_.mediumOptions;
+        if (options.empty()) {
+            lastMessage_ = "当前四个选项为空，无法提供提示。";
+            return std::nullopt;
+        }
+
+        int bestDistance = std::numeric_limits<int>::max();
+        int bestFamiliarity = std::numeric_limits<int>::min();
+        for (int optionId : options) {
+            if (optionId < 0 || static_cast<std::size_t>(optionId) >= session_.distanceToTarget.size()) {
+                continue;
+            }
+            const int distance = session_.distanceToTarget[static_cast<std::size_t>(optionId)];
+            if (distance < 0) {
+                continue;
+            }
+            const IdiomEntry* entry = graph_.getEntry(optionId);
+            const int familiarity = entry != nullptr ? entry->familiarityScore : 0;
+            if (distance < bestDistance || (distance == bestDistance && familiarity > bestFamiliarity)) {
+                bestDistance = distance;
+                bestFamiliarity = familiarity;
+                hintId = optionId;
+            }
+        }
+
+        if (hintId < 0) {
+            lastMessage_ = "当前四个选项都无法有效到达终点。";
+            return std::nullopt;
+        }
+    } else {
+        const int currentId = session_.playerPath.back();
+        const std::optional<int> nextId = hintEngine_.suggestNextStep(currentId, session_.targetId);
+        if (!nextId.has_value()) {
+            lastMessage_ = "当前无法提供有效提示。";
+            return std::nullopt;
+        }
+        hintId = *nextId;
     }
 
     session_.hintCount += 1;
-    if (session_.mode == GameMode::SingleHard) {
+    if (isHardMode(session_.mode)) {
         session_.stepCount += 1;
     }
 
-    lastMessage_ = "Hint provided.";
-    return wordOf(*nextId);
+    lastMessage_ = "已提供提示。";
+    if (isBattleMode(session_.mode)) {
+        sendBattleState();
+    }
+    return wordOf(hintId);
 }
 
 PathResult IdiomChainController::revealAnswer() const {
@@ -519,6 +678,21 @@ std::vector<GameRecord> IdiomChainController::loadAllRecords() const {
 
 void IdiomChainController::prepareSession(IModeStrategy& strategy) {
     strategy.prepareQuestion(session_, graph_, solver_);
+    initializeSessionForQuestion(session_.mode, session_.startId, session_.targetId, true);
+    lastMessage_ = "本局已开始，请通过严格带调拼音接龙到达终点。";
+}
+
+void IdiomChainController::prepareFixedBattleSession(GameMode mode, int startId, int targetId) {
+    initializeSessionForQuestion(mode, startId, targetId, true);
+    session_.battleRoundStarted = true;
+    lastMessage_ = "对战已开始，请尽快完成。";
+    g_timer.reset();
+}
+
+void IdiomChainController::initializeSessionForQuestion(GameMode mode, int startId, int targetId, bool generateEasyPool) {
+    session_.mode = mode;
+    session_.startId = startId;
+    session_.targetId = targetId;
 
     if (session_.startId < 0 || session_.targetId < 0) {
         throw std::runtime_error("Failed to create a reachable question.");
@@ -535,14 +709,33 @@ void IdiomChainController::prepareSession(IModeStrategy& strategy) {
     session_.playerPath = { session_.startId };
     session_.rollbackStack = std::stack<int>{};
     session_.stepCount = 0;
+    session_.elapsedSeconds = 0.0;
     session_.finished = false;
     session_.success = false;
     session_.score = 0;
-    lastMessage_ = "Round ready. Reach the target with exact tone-matching pinyin chaining.";
+    session_.hintCount = 0;
+    session_.rollbackCount = 0;
+    session_.mediumOptions.clear();
+    session_.easyPool.clear();
+    session_.remotePath.clear();
+    session_.remoteStepCount = 0;
+    session_.remoteElapsedSeconds = 0.0;
+    session_.remoteScore = 0;
+    session_.remoteFinished = false;
+    session_.remoteSuccess = false;
+    session_.battleWinnerText.clear();
 
-    if (session_.mode == GameMode::SingleEasy) {
+    if (isEasyMode(mode)) {
+        session_.timeLimitSeconds = 180;
+    } else if (isMediumMode(mode)) {
+        session_.timeLimitSeconds = 240;
+    } else {
+        session_.timeLimitSeconds = 300;
+        session_.maxHints = 3;
+    }
+
+    if (generateEasyPool && isEasyMode(mode)) {
         session_.easyPool = best.path;
-
         std::vector<int> distractors;
         const std::vector<int>& startNeighbors = graph_.getNextIds(session_.startId);
         for (int neighborId : startNeighbors) {
@@ -566,8 +759,12 @@ void IdiomChainController::updateElapsedSeconds() {
         && session_.elapsedSeconds > static_cast<double>(session_.timeLimitSeconds)) {
         session_.finished = true;
         session_.success = false;
-        lastMessage_ = "Time limit exceeded.";
+        lastMessage_ = "已超出时间限制。";
         saveRecordIfNeeded();
+        if (isBattleMode(session_.mode)) {
+            sendBattleState();
+            updateBattleWinnerText();
+        }
     }
 }
 
@@ -577,17 +774,17 @@ void IdiomChainController::finalizeIfTargetReached() {
         session_.success = true;
         const ScoreCalculator calculator;
         session_.score = calculator.calculate(session_);
-        lastMessage_ = "Target reached.";
+        lastMessage_ = isBattleMode(session_.mode) ? "已到达终点，等待对手完成。" : "已成功到达终点。";
         saveRecordIfNeeded();
         return;
     }
 
-    if (session_.mode == GameMode::SingleMedium) {
+    if (isMediumMode(session_.mode)) {
         const std::vector<int>& options = session_.mediumOptions;
         if (options.empty()) {
             session_.finished = true;
             session_.success = false;
-            lastMessage_ = "No remaining reachable options. This round is lost.";
+            lastMessage_ = "已没有可继续到达终点的选项，本局失败。";
             saveRecordIfNeeded();
         }
     }
@@ -617,9 +814,8 @@ void IdiomChainController::saveRecordIfNeeded() {
     pendingRecordFlush_ = true;
 }
 
-
 void IdiomChainController::refreshMediumOptions() {
-    if (session_.mode != GameMode::SingleMedium) {
+    if (!isMediumMode(session_.mode)) {
         session_.mediumOptions.clear();
         return;
     }
@@ -645,7 +841,8 @@ std::vector<int> IdiomChainController::computeMediumOptionsInternal() const {
         int familiarity { 0 };
     };
 
-    std::vector<OptionInfo> candidates;
+    std::unordered_map<std::string, OptionInfo> bestByWord;
+
     for (int nextId : graph_.getNextIds(currentId)) {
         if (used.find(nextId) != used.end()) {
             continue;
@@ -657,8 +854,33 @@ std::vector<int> IdiomChainController::computeMediumOptionsInternal() const {
         if (distance < 0) {
             continue;
         }
+
         const IdiomEntry* entry = graph_.getEntry(nextId);
-        candidates.push_back(OptionInfo{nextId, distance, entry != nullptr ? entry->familiarityScore : 0});
+        const int familiarity = entry != nullptr ? entry->familiarityScore : 0;
+        const std::string word = entry != nullptr ? entry->word : wordOf(nextId);
+        if (word.empty()) {
+            continue;
+        }
+
+        OptionInfo candidate{nextId, distance, familiarity};
+        auto it = bestByWord.find(word);
+        if (it == bestByWord.end()) {
+            bestByWord.emplace(word, candidate);
+            continue;
+        }
+        const OptionInfo& old = it->second;
+        if (candidate.distance < old.distance ||
+            (candidate.distance == old.distance && candidate.familiarity > old.familiarity) ||
+            (candidate.distance == old.distance && candidate.familiarity == old.familiarity &&
+             candidate.idiomId == session_.targetId && old.idiomId != session_.targetId)) {
+            it->second = candidate;
+        }
+    }
+
+    std::vector<OptionInfo> candidates;
+    candidates.reserve(bestByWord.size());
+    for (const auto& kv : bestByWord) {
+        candidates.push_back(kv.second);
     }
 
     std::sort(candidates.begin(), candidates.end(), [&](const OptionInfo& lhs, const OptionInfo& rhs) {
@@ -689,14 +911,177 @@ bool IdiomChainController::isInputValidNext(int nextId) {
     const int currentId = session_.playerPath.back();
     const std::vector<int>& nextIds = graph_.getNextIds(currentId);
     if (std::find(nextIds.begin(), nextIds.end(), nextId) == nextIds.end()) {
-        lastMessage_ = "The selected idiom does not satisfy exact pinyin-with-tone chaining.";
+        lastMessage_ = "所选成语不满足严格带调拼音接龙规则。";
         return false;
     }
 
     if (std::find(session_.playerPath.begin(), session_.playerPath.end(), nextId) != session_.playerPath.end()) {
-        lastMessage_ = "This idiom is already used in the current path.";
+        lastMessage_ = "该成语已经在当前路径中使用过了。";
         return false;
     }
 
     return true;
+}
+
+void IdiomChainController::sendBattleState() {
+    if (!battleTransport_ || !isBattleMode(session_.mode) || !session_.battleConnected || !session_.battleRoundStarted) {
+        return;
+    }
+
+    std::ostringstream oss;
+    oss << "STATE|"
+        << session_.stepCount << "|"
+        << session_.elapsedSeconds << "|"
+        << (session_.finished ? 1 : 0) << "|"
+        << (session_.success ? 1 : 0) << "|"
+        << session_.score << "|"
+        << serializePath(session_.playerPath);
+    battleTransport_->send(oss.str());
+}
+
+void IdiomChainController::handleBattleMessage(const std::string& message) {
+    const std::vector<std::string> parts = split(message, '|');
+    if (parts.empty()) {
+        return;
+    }
+
+    if (parts[0] == "HELLO") {
+        if (!session_.battleIsHost || parts.size() < 2) {
+            return;
+        }
+        session_.remotePlayerName = parts[1];
+        session_.battleConnected = true;
+
+        std::ostringstream ack;
+        ack << "HELLO_ACK|" << session_.playerName << "|" << static_cast<int>(pendingBattleMode_);
+        battleTransport_->send(ack.str());
+
+        startHostBattleRound();
+        return;
+    }
+
+    if (parts[0] == "HELLO_ACK") {
+        if (session_.battleIsHost || parts.size() < 3) {
+            return;
+        }
+        session_.remotePlayerName = parts[1];
+        session_.battleConnected = true;
+        pendingBattleMode_ = static_cast<GameMode>(std::stoi(parts[2]));
+        lastMessage_ = "已连接到房主，等待题目同步。";
+        return;
+    }
+
+    if (parts[0] == "START") {
+        if (parts.size() < 4) {
+            return;
+        }
+        const GameMode mode = static_cast<GameMode>(std::stoi(parts[1]));
+        const int startId = std::stoi(parts[2]);
+        const int targetId = std::stoi(parts[3]);
+
+        prepareFixedBattleSession(mode, startId, targetId);
+        session_.battleConnected = true;
+        session_.battleRoundStarted = true;
+        lastMessage_ = "已收到对局题目，对局开始。";
+        sendBattleState();
+        return;
+    }
+
+    if (parts[0] == "STATE") {
+        if (parts.size() < 7) {
+            return;
+        }
+        session_.remoteStepCount = std::stoi(parts[1]);
+        session_.remoteElapsedSeconds = std::stod(parts[2]);
+        session_.remoteFinished = (std::stoi(parts[3]) != 0);
+        session_.remoteSuccess = (std::stoi(parts[4]) != 0);
+        session_.remoteScore = std::stoi(parts[5]);
+        session_.remotePath = deserializePath(parts[6]);
+        updateBattleWinnerText();
+        return;
+    }
+}
+
+void IdiomChainController::startHostBattleRound() {
+    session_.mode = pendingBattleMode_;
+    std::unique_ptr<IModeStrategy> strategy;
+    if (isEasyMode(pendingBattleMode_)) {
+        strategy = std::make_unique<EasyModeStrategy>();
+    } else if (isMediumMode(pendingBattleMode_)) {
+        strategy = std::make_unique<MediumModeStrategy>();
+    } else {
+        strategy = std::make_unique<HardModeStrategy>();
+    }
+
+    prepareSession(*strategy);
+    session_.battleConnected = true;
+    session_.battleRoundStarted = true;
+    session_.battleIsHost = true;
+    g_timer.reset();
+
+    std::ostringstream startMsg;
+    startMsg << "START|"
+             << static_cast<int>(pendingBattleMode_) << "|"
+             << session_.startId << "|"
+             << session_.targetId;
+    battleTransport_->send(startMsg.str());
+    sendBattleState();
+    lastMessage_ = "对手已连接，对局开始。";
+}
+
+void IdiomChainController::updateBattleWinnerText() {
+    if (!isBattleMode(session_.mode) || !session_.battleRoundStarted) {
+        return;
+    }
+    if (!session_.finished || !session_.remoteFinished) {
+        session_.battleWinnerText.clear();
+        return;
+    }
+
+    if (session_.score != session_.remoteScore) {
+        session_.battleWinnerText = (session_.score > session_.remoteScore)
+            ? (session_.playerName + " 获胜")
+            : (session_.remotePlayerName + " 获胜");
+        return;
+    }
+
+    if (session_.stepCount != session_.remoteStepCount) {
+        session_.battleWinnerText = (session_.stepCount < session_.remoteStepCount)
+            ? (session_.playerName + " 获胜")
+            : (session_.remotePlayerName + " 获胜");
+        return;
+    }
+
+    if (session_.elapsedSeconds != session_.remoteElapsedSeconds) {
+        session_.battleWinnerText = (session_.elapsedSeconds < session_.remoteElapsedSeconds)
+            ? (session_.playerName + " 获胜")
+            : (session_.remotePlayerName + " 获胜");
+        return;
+    }
+
+    session_.battleWinnerText = "平局";
+}
+
+std::string IdiomChainController::serializePath(const std::vector<int>& path) const {
+    std::ostringstream oss;
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        if (i > 0U) {
+            oss << ",";
+        }
+        oss << path[i];
+    }
+    return oss.str();
+}
+
+std::vector<int> IdiomChainController::deserializePath(const std::string& text) const {
+    std::vector<int> path;
+    if (text.empty()) {
+        return path;
+    }
+    for (const std::string& item : split(text, ',')) {
+        if (!item.empty()) {
+            path.push_back(std::stoi(item));
+        }
+    }
+    return path;
 }

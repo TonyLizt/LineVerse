@@ -5,10 +5,6 @@
 
 /**
  * @brief Network transport abstraction for LAN battle mode.
- *
- * The current package only provides a stub implementation, but the interface
- * is already in place so that the module can later switch to a real Asio-based
- * LAN transport without changing controller or UI code.
  */
 class IBattleTransport {
 public:

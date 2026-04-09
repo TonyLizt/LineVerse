@@ -49,6 +49,20 @@ public:
     std::vector<int> easyPool;
     std::vector<int> distanceToTarget;
     std::vector<int> mediumOptions;
+
+    // ===== Battle runtime state =====
+    bool battleConnected { false };
+    bool battleIsHost { false };
+    bool battleRoundStarted { false };
+
+    std::string remotePlayerName;
+    std::vector<int> remotePath;
+    int remoteStepCount { 0 };
+    double remoteElapsedSeconds { 0.0 };
+    int remoteScore { 0 };
+    bool remoteFinished { false };
+    bool remoteSuccess { false };
+    std::string battleWinnerText;
 };
 
 #endif

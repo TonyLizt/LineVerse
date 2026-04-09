@@ -8,22 +8,13 @@
 #include "core/PathSolver.h"
 #include "data/IIdiomRepository.h"
 #include "data/RecordRepository.h"
+#include "net/IBattleTransport.h"
 #include "ui/IdiomChainScene.h"
 
 #include <memory>
 
-/**
- * @brief Facade class for the IdiomChainGame module.
- *
- * The module coordinates data loading, graph building, controller creation,
- * scene execution, result saving and cleanup.
- */
 class IdiomChainGame {
 public:
-    /**
-     * @brief Run the module lifecycle.
-     * @return 0 to exit the program, 1 to return to menu, -1 on failure.
-     */
     int start();
 
 private:
@@ -40,6 +31,7 @@ private:
     std::unique_ptr<PathSolver> solver_;
     std::unique_ptr<HintEngine> hintEngine_;
     std::unique_ptr<RecordRepository> recordRepository_;
+    std::unique_ptr<IBattleTransport> battleTransport_;
     std::unique_ptr<IdiomChainController> controller_;
     std::unique_ptr<IdiomChainScene> scene_;
 };

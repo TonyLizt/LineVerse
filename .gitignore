@@ -1,0 +1,12 @@
+# Ignore everything by default
+/*
+
+# Keep this file
+!/.gitignore
+
+# Keep CMake build script
+!/CMakeLists.txt
+
+# Keep source directory and all contents
+!/src/
+!/src/**

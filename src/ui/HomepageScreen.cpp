@@ -40,6 +40,7 @@ constexpr int kSelectionButtonGap = 45;
 constexpr int kSelectionSelectedBgHeight = 150;
 constexpr int kSelectionSelectedBgWidth = 460;
 constexpr int kSelectionBgTargetHeight = 1000;
+constexpr int kSelectionBgOffsetX = 200;
 
 constexpr double kBreathSpeed = 0.0045;
 constexpr Uint8 kBreathAlphaMin = 255;
@@ -245,10 +246,10 @@ SDL_Renderer* createRendererWithFallback(SDL_Window* window) {
 
 SDL_Rect buildHomeBgRect(int texW, int texH) {
     if (texW <= 0 || texH <= 0) {
-        return SDL_Rect{0, 100, 900, 700};
+        return SDL_Rect{0, 100, 900, 650};
     }
 
-    const int dstH = 700;
+    const int dstH = 650;
     const int dstW = static_cast<int>(std::lround(
         static_cast<double>(texW) * static_cast<double>(dstH) / static_cast<double>(texH)
     ));
@@ -263,14 +264,14 @@ SDL_Rect buildHomeBgRect(int texW, int texH) {
 
 SDL_Rect buildTopLeftBgRect(int texW, int texH, int targetHeight) {
     if (texW <= 0 || texH <= 0) {
-        return SDL_Rect{0, 0, 1000, targetHeight};
+        return SDL_Rect{kSelectionBgOffsetX, 0, 1000, targetHeight};
     }
 
     const int dstW = static_cast<int>(std::lround(
         static_cast<double>(texW) * static_cast<double>(targetHeight) / static_cast<double>(texH)
     ));
 
-    return SDL_Rect{0, 0, dstW, targetHeight};
+    return SDL_Rect{kSelectionBgOffsetX, 0, dstW, targetHeight};
 }
 
 TextTexture createTextTexture(
@@ -355,31 +356,31 @@ PageLayout buildPageLayout(
     return layout;
 }
 
-std::string modeChoiceToText(HomepageModeChoice mode) {
-    switch (mode) {
-    case HomepageModeChoice::Idiom:
-        return u8"成語";
-    case HomepageModeChoice::Mixed:
-        return u8"混合";
-    case HomepageModeChoice::None:
-    default:
-        return u8"未選擇";
-    }
-}
+// std::string modeChoiceToText(HomepageModeChoice mode) {
+//     switch (mode) {
+//     case HomepageModeChoice::Idiom:
+//         return u8"成語";
+//     case HomepageModeChoice::Mixed:
+//         return u8"混合";
+//     case HomepageModeChoice::None:
+//     default:
+//         return u8"未選擇";
+//     }
+// }
 
-std::string difficultyChoiceToText(HomepageDifficultyChoice difficulty) {
-    switch (difficulty) {
-    case HomepageDifficultyChoice::Easy:
-        return u8"簡單";
-    case HomepageDifficultyChoice::Medium:
-        return u8"中等";
-    case HomepageDifficultyChoice::Hard:
-        return u8"困難";
-    case HomepageDifficultyChoice::None:
-    default:
-        return u8"未選擇";
-    }
-}
+// std::string difficultyChoiceToText(HomepageDifficultyChoice difficulty) {
+//     switch (difficulty) {
+//     case HomepageDifficultyChoice::Easy:
+//         return u8"簡單";
+//     case HomepageDifficultyChoice::Medium:
+//         return u8"中等";
+//     case HomepageDifficultyChoice::Hard:
+//         return u8"困難";
+//     case HomepageDifficultyChoice::None:
+//     default:
+//         return u8"未選擇";
+//     }
+// }
 
 } // namespace
 
@@ -674,11 +675,13 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
                     switch (homeSelectedIndex) {
                     case 0:
                         /*
-                        * 汉兜：当前没有对应的游戏 main 入口。
-                        * 如果之后你有 HanDuoGame，再在这里接入。
+                        * 汉兜
                         */
-                        std::cout << "[Homepage] 汉兜入口暂未接入启动流程。\n";
-                        return true;
+                        selection.targetGame = HomepageTargetGame::HandleGame;
+                        selection.mode = HomepageModeChoice::None;
+                        selection.difficulty = HomepageDifficultyChoice::None;
+                        result = kResultLaunch;
+                        return false;
 
                     case 1:
                         /*

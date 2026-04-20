@@ -61,7 +61,7 @@ std::string HardModeStrategy::name() const {
 void HardModeStrategy::prepareQuestion(GameSession& session, const IdiomGraph& graph, const PathSolver& solver) {
     session.timeLimitSeconds = 300;
     int targetId = -1;
-    const int startId = pickReachablePair(graph, solver, 5, 8, targetId);
+    const int startId = pickReachablePair(graph, solver, 3, 4, targetId);
     session.startId = startId;
     session.targetId = targetId;
     session.maxHints = 3;

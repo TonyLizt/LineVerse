@@ -126,7 +126,41 @@ void IdiomChainController::startSingleGame(GameMode mode, const std::string& pla
     refreshMediumOptions();
     g_timer.reset();
     pendingRecordFlush_ = false;
+    answerRevealedThisRound_ = false;
     lastHeartbeatSentSeconds_ = -1.0;
+}
+
+std::string IdiomChainController::evaluateStepQuality(int fromId, int toId) const {
+    if (fromId < 0 || toId < 0) {
+        return "这一步：无法评价。";
+    }
+    if (static_cast<std::size_t>(fromId) >= session_.distanceToTarget.size() ||
+        static_cast<std::size_t>(toId) >= session_.distanceToTarget.size()) {
+        return "这一步：无法评价。";
+    }
+
+    const int before = session_.distanceToTarget[static_cast<std::size_t>(fromId)];
+    const int after  = session_.distanceToTarget[static_cast<std::size_t>(toId)];
+
+    if (before < 0 || after < 0) {
+        return "这一步：当前路径无法到达终点。";
+    }
+
+    if (after == 0) {
+        return "这一步：完美，已到达终点。";
+    }
+
+    const int expected = before - 1;
+    const int gap = after - expected;
+
+    if (gap <= 0) {
+        return "这一步：优秀，当前距终点最短还需 " + std::to_string(after) + " 步。";
+    }
+    if (gap == 1) {
+        return "这一步：一般，当前距终点最短还需 " + std::to_string(after) + " 步。";
+    }
+    return "这一步：较差，比最优路线多绕了 " + std::to_string(gap) +
+           " 步，当前距终点最短还需 " + std::to_string(after) + " 步。";
 }
 
 bool IdiomChainController::hostBattle(GameMode mode, const std::string& playerName, unsigned short port) {
@@ -148,6 +182,7 @@ bool IdiomChainController::hostBattle(GameMode mode, const std::string& playerNa
     session_.battleRoundStarted = false;
     pendingBattleMode_ = mode;
     pendingRecordFlush_ = false;
+    answerRevealedThisRound_ = false;
     lastHeartbeatSentSeconds_ = -1.0;
     if (!battleTransport_->host(port)) {
         lastMessage_ = "创建房间失败。";
@@ -176,6 +211,7 @@ bool IdiomChainController::joinBattle(GameMode mode, const std::string& playerNa
     session_.battleRoundStarted = false;
     pendingBattleMode_ = mode;
     pendingRecordFlush_ = false;
+    answerRevealedThisRound_ = false;
     lastHeartbeatSentSeconds_ = -1.0;
 
     if (!battleTransport_->connectTo(ip, port)) {
@@ -390,19 +426,25 @@ bool IdiomChainController::submitMediumChoice(int optionIndex) {
         return false;
     }
 
+    const int fromId = session_.playerPath.back();
     const int selectedId = options[static_cast<std::size_t>(optionIndex)];
     if (!isInputValidNext(selectedId)) {
         return false;
     }
 
-    session_.rollbackStack.push(session_.playerPath.back());
+    const std::string stepEval = evaluateStepQuality(fromId, selectedId);
+
+    session_.rollbackStack.push(fromId);
     session_.playerPath.push_back(selectedId);
     session_.stepCount += 1;
+    pendingHintId_ = -1;
+    pendingHintFromId_ = -1;
+    pendingHintNeedReveal_ = false;
 
     finalizeIfTargetReached();
     if (!session_.finished) {
         refreshMediumOptions();
-        lastMessage_ = "已提交该步选择。";
+        lastMessage_ = stepEval;
     }
     if (isBattleMode(session_.mode)) {
         sendBattleState();
@@ -445,13 +487,19 @@ bool IdiomChainController::submitHardInput(const std::string& inputWordOrAbbrevi
         return false;
     }
 
+    const int fromId = session_.playerPath.back();
+    const std::string stepEval = evaluateStepQuality(fromId, nextId);
+
     session_.rollbackStack.push(session_.playerPath.back());
     session_.playerPath.push_back(nextId);
     session_.stepCount += 1;
+    pendingHintId_ = -1;
+    pendingHintFromId_ = -1;
+    pendingHintNeedReveal_ = false;
 
     finalizeIfTargetReached();
     if (!session_.finished) {
-        lastMessage_ = "已提交一步。";
+        lastMessage_ = stepEval;
     }
     if (isBattleMode(session_.mode)) {
         sendBattleState();
@@ -553,6 +601,9 @@ bool IdiomChainController::rollbackOneStep() {
     }
 
     session_.playerPath.pop_back();
+    pendingHintId_ = -1;
+    pendingHintFromId_ = -1;
+    pendingHintNeedReveal_ = false;
     if (!session_.rollbackStack.empty()) {
         session_.rollbackStack.pop();
     }
@@ -573,18 +624,38 @@ std::optional<std::string> IdiomChainController::requestHint() {
         lastMessage_ = "简单模式不提供提示。";
         return std::nullopt;
     }
-    if (isHardMode(session_.mode) && session_.hintCount >= session_.maxHints) {
-        lastMessage_ = "提示次数已用完。";
-        return std::nullopt;
-    }
 
     if (session_.playerPath.empty()) {
         lastMessage_ = "当前没有可供提示的路径状态。";
         return std::nullopt;
     }
 
+    const int currentId = session_.playerPath.back();
+
+    // 如果当前这一组提示已经给过第一层释义，
+    // 并且玩家还停留在同一个节点上，
+    // 那么第二次点击就直接给出具体成语，并计入一步。
+    if (pendingHintNeedReveal_
+        && pendingHintId_ >= 0
+        && pendingHintFromId_ == currentId) {
+
+        session_.stepCount += 1;
+        pendingHintNeedReveal_ = false;
+
+        const std::string hintWord = wordOf(pendingHintId_);
+        lastMessage_ = "强提示：推荐下一步为“" + hintWord + "”，本次强提示计入一步。";
+
+        if (isBattleMode(session_.mode)) {
+            sendBattleState();
+        }
+        return hintWord;
+    }
+
     int hintId = -1;
 
+    // =========================
+    // 中等模式：两段式提示，不限次数
+    // =========================
     if (isMediumMode(session_.mode)) {
         const std::vector<int>& options = session_.mediumOptions;
         if (options.empty()) {
@@ -594,16 +665,20 @@ std::optional<std::string> IdiomChainController::requestHint() {
 
         int bestDistance = std::numeric_limits<int>::max();
         int bestFamiliarity = std::numeric_limits<int>::min();
+
         for (int optionId : options) {
             if (optionId < 0 || static_cast<std::size_t>(optionId) >= session_.distanceToTarget.size()) {
                 continue;
             }
+
             const int distance = session_.distanceToTarget[static_cast<std::size_t>(optionId)];
             if (distance < 0) {
                 continue;
             }
+
             const IdiomEntry* entry = graph_.getEntry(optionId);
             const int familiarity = entry != nullptr ? entry->familiarityScore : 0;
+
             if (distance < bestDistance || (distance == bestDistance && familiarity > bestFamiliarity)) {
                 bestDistance = distance;
                 bestFamiliarity = familiarity;
@@ -615,26 +690,55 @@ std::optional<std::string> IdiomChainController::requestHint() {
             lastMessage_ = "当前四个选项都无法有效到达终点。";
             return std::nullopt;
         }
-    } else {
-        const int currentId = session_.playerPath.back();
+
+        const std::string meaning = explanationOf(hintId).empty() ? "（暂无释义）" : explanationOf(hintId);
+
+        pendingHintId_ = hintId;
+        pendingHintFromId_ = currentId;
+        pendingHintNeedReveal_ = true;
+
+        lastMessage_ =
+            "提示：下一步推荐成语的释义为: " + meaning +
+            "\n如仍需要，可再次点击提示查看具体成语（将计入一步）。";
+
+        return meaning;
+    }
+
+    // =========================
+    // 困难模式：两段式提示，限制 4 组
+    // =========================
+    if (isHardMode(session_.mode)) {
+        if (session_.hintCount >= session_.maxHints) {
+            lastMessage_ = "提示机会已用完。";
+            return std::nullopt;
+        }
+
         const std::optional<int> nextId = hintEngine_.suggestNextStep(currentId, session_.targetId);
         if (!nextId.has_value()) {
             lastMessage_ = "当前无法提供有效提示。";
             return std::nullopt;
         }
+
         hintId = *nextId;
+        const std::string meaning = explanationOf(hintId).empty() ? "（暂无释义）" : explanationOf(hintId);
+
+        // 困难模式只有“开启新的一组提示”时才消耗次数
+        session_.hintCount += 1;
+
+        pendingHintId_ = hintId;
+        pendingHintFromId_ = currentId;
+        pendingHintNeedReveal_ = true;
+
+        lastMessage_ =
+            "提示（第" + std::to_string(session_.hintCount) + "/" + std::to_string(session_.maxHints) +
+            "组）：下一步推荐成语的释义为: " + meaning +
+            "\n如仍需要，可再次点击提示查看具体成语（将计入一步）。";
+
+        return meaning;
     }
 
-    session_.hintCount += 1;
-    if (isMediumMode(session_.mode) || isHardMode(session_.mode)) {
-        session_.stepCount += 1;
-    }
-
-    lastMessage_ = "已提供提示。";
-    if (isBattleMode(session_.mode)) {
-        sendBattleState();
-    }
-    return wordOf(hintId);
+    lastMessage_ = "当前模式无法提供提示。";
+    return std::nullopt;
 }
 
 PathResult IdiomChainController::revealAnswer() {
@@ -751,14 +855,15 @@ void IdiomChainController::initializeSessionForQuestion(GameMode mode, int start
     session_.remoteFinished = false;
     session_.remoteSuccess = false;
     session_.battleWinnerText.clear();
+    answerRevealedThisRound_ = false;
 
     if (isEasyMode(mode)) {
-        session_.timeLimitSeconds = 180;
+        session_.timeLimitSeconds = 60;
     } else if (isMediumMode(mode)) {
-        session_.timeLimitSeconds = 240;
+        session_.timeLimitSeconds = 60;
     } else {
-        session_.timeLimitSeconds = 300;
-        session_.maxHints = 3;
+        session_.timeLimitSeconds = 90;
+        session_.maxHints = 4;
     }
 
     if (generateEasyPool && isEasyMode(mode)) {
@@ -778,6 +883,9 @@ void IdiomChainController::initializeSessionForQuestion(GameMode mode, int start
         std::mt19937 randomEngine(static_cast<unsigned int>(std::random_device{}()));
         std::shuffle(session_.easyPool.begin(), session_.easyPool.end(), randomEngine);
     }
+    pendingHintId_ = -1;
+    pendingHintFromId_ = -1;
+    pendingHintNeedReveal_ = false;
 }
 
 void IdiomChainController::updateElapsedSeconds() {

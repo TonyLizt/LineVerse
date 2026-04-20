@@ -41,6 +41,42 @@ void fillRect(SDL_Renderer* renderer, const SDL_Rect& rect, SDL_Color color) {
     SDL_RenderFillRect(renderer, &rect);
 }
 
+class ClipGuard {
+public:
+    ClipGuard(SDL_Renderer* renderer, const SDL_Rect& requested)
+        : renderer_(renderer) {
+        oldEnabled_ = SDL_RenderIsClipEnabled(renderer_) == SDL_TRUE;
+        if (oldEnabled_) {
+            SDL_RenderGetClipRect(renderer_, &oldClip_);
+        }
+
+        SDL_Rect finalClip = requested;
+        if (oldEnabled_) {
+            SDL_Rect intersection{};
+            if (SDL_IntersectRect(&oldClip_, &requested, &intersection) == SDL_TRUE) {
+                finalClip = intersection;
+            } else {
+                finalClip = SDL_Rect{0, 0, 0, 0};
+            }
+        }
+
+        SDL_RenderSetClipRect(renderer_, &finalClip);
+    }
+
+    ~ClipGuard() {
+        if (oldEnabled_) {
+            SDL_RenderSetClipRect(renderer_, &oldClip_);
+        } else {
+            SDL_RenderSetClipRect(renderer_, nullptr);
+        }
+    }
+
+private:
+    SDL_Renderer* renderer_{nullptr};
+    bool oldEnabled_{false};
+    SDL_Rect oldClip_{};
+};
+
 void strokeRect(SDL_Renderer* renderer, const SDL_Rect& rect, SDL_Color color, int thickness = 1) {
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     for (int i = 0; i < thickness; ++i) {
@@ -85,6 +121,164 @@ bool isBattleMode(GameMode mode) {
     return mode == GameMode::BattleEasy
         || mode == GameMode::BattleMedium
         || mode == GameMode::BattleHard;
+}
+
+std::vector<std::string> kaiFontPaths() {
+    return {
+        "assets/IdiomChainGame/fonts/simkai.ttf",
+        "assets/IdiomChainGame/fonts/STKAITI.TTF",
+        "assets/fonts/simkai.ttf",
+        "assets/fonts/STKAITI.TTF",
+        "C:/Windows/Fonts/simkai.ttf",
+        "C:/Windows/Fonts/STKAITI.TTF",
+        "C:/Windows/Fonts/kaiu.ttf",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    };
+}
+
+std::vector<std::string> songFontPaths() {
+    return {
+        "assets/IdiomChainGame/fonts/simsun.ttc",
+        "assets/IdiomChainGame/fonts/STSONG.TTF",
+        "assets/fonts/simsun.ttc",
+        "assets/fonts/STSONG.TTF",
+        "C:/Windows/Fonts/simsun.ttc",
+        "C:/Windows/Fonts/STSONG.TTF",
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    };
+}
+
+std::vector<std::string> sansFontPaths() {
+    return {
+        "assets/IdiomChainGame/fonts/NotoSansSC-Regular.otf",
+        "assets/IdiomChainGame/fonts/NotoSansCJKsc-Regular.otf",
+        "assets/fonts/NotoSansSC-Regular.otf",
+        "assets/fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/simsun.ttc",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
+    };
+}
+
+TTF_Font* openFirstFont(const std::vector<std::string>& paths, int size) {
+    for (const std::string& path : paths) {
+        TTF_Font* font = TTF_OpenFont(path.c_str(), size);
+        if (font != nullptr) {
+            return font;
+        }
+    }
+    return nullptr;
+}
+
+void closeFontPtr(TTF_Font*& font) {
+    if (font != nullptr) {
+        TTF_CloseFont(font);
+        font = nullptr;
+    }
+}
+
+TTF_Font* gSubtitleStyleFont = nullptr;
+TTF_Font* gCandidateSubtitleFont = nullptr;
+TTF_Font* gCandidateBodyFont = nullptr;
+TTF_Font* gCandidateSmallFont = nullptr;
+TTF_Font* gExplanationBodyFont = nullptr;
+TTF_Font* gExplanationSmallFont = nullptr;
+
+void drawTextRaw(SDL_Renderer* renderer,
+                 TTF_Font* font,
+                 const std::string& text,
+                 int x,
+                 int y,
+                 SDL_Color color,
+                 bool centered = false) {
+    if (renderer == nullptr || font == nullptr || text.empty()) {
+        return;
+    }
+    SDL_Surface* surface = TTF_RenderUTF8_Blended(font, text.c_str(), color);
+    if (surface == nullptr) {
+        return;
+    }
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    if (texture == nullptr) {
+        SDL_FreeSurface(surface);
+        return;
+    }
+    SDL_Rect dst{x, y, surface->w, surface->h};
+    if (centered) {
+        dst.x -= dst.w / 2;
+        dst.y -= dst.h / 2;
+    }
+    SDL_FreeSurface(surface);
+    SDL_RenderCopy(renderer, texture, nullptr, &dst);
+    SDL_DestroyTexture(texture);
+}
+
+void drawFittedTextWithFonts(SDL_Renderer* renderer,
+                             const std::vector<TTF_Font*>& fontCandidates,
+                             const std::string& text,
+                             const SDL_Rect& rect,
+                             SDL_Color color,
+                             bool centered = false,
+                             bool allowWrap = true) {
+    if (renderer == nullptr || text.empty() || rect.w <= 0 || rect.h <= 0) {
+        return;
+    }
+    std::vector<TTF_Font*> fonts;
+    for (TTF_Font* font : fontCandidates) {
+        if (font != nullptr && std::find(fonts.begin(), fonts.end(), font) == fonts.end()) {
+            fonts.push_back(font);
+        }
+    }
+    if (fonts.empty()) {
+        return;
+    }
+    for (TTF_Font* font : fonts) {
+        int w = 0;
+        int h = 0;
+        if (TTF_SizeUTF8(font, text.c_str(), &w, &h) == 0 && w <= rect.w - 8 && h <= rect.h - 4) {
+            const int drawX = centered ? rect.x + rect.w / 2 : rect.x + 4;
+            const int drawY = centered ? rect.y + rect.h / 2 : rect.y + (rect.h - h) / 2;
+            drawTextRaw(renderer, font, text, drawX, drawY, color, centered);
+            return;
+        }
+    }
+    TTF_Font* wrapFont = fonts.back();
+    if (!allowWrap) {
+        drawTextRaw(renderer, wrapFont, text, centered ? rect.x + rect.w / 2 : rect.x + 4,
+                    centered ? rect.y + rect.h / 2 : rect.y + 2, color, centered);
+        return;
+    }
+    SDL_Surface* surface = TTF_RenderUTF8_Blended_Wrapped(wrapFont, text.c_str(), color, rect.w - 8);
+    if (surface == nullptr) {
+        return;
+    }
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    if (texture == nullptr) {
+        SDL_FreeSurface(surface);
+        return;
+    }
+    SDL_Rect dst{rect.x + 4, rect.y + 2, surface->w, surface->h};
+    if (centered) {
+        dst.x = rect.x + (rect.w - surface->w) / 2;
+        dst.y = rect.y + (rect.h - std::min(surface->h, rect.h - 4)) / 2;
+    }
+    SDL_FreeSurface(surface);
+    {
+        ClipGuard clip(renderer, rect);
+        SDL_RenderCopy(renderer, texture, nullptr, &dst);
+    }
+    SDL_DestroyTexture(texture);
 }
 
 } // namespace
@@ -216,6 +410,12 @@ bool IdiomChainScene::initialize() {
 
 void IdiomChainScene::shutdown() {
     SDL_StopTextInput();
+    closeFontPtr(gSubtitleStyleFont);
+    closeFontPtr(gCandidateSubtitleFont);
+    closeFontPtr(gCandidateBodyFont);
+    closeFontPtr(gCandidateSmallFont);
+    closeFontPtr(gExplanationBodyFont);
+    closeFontPtr(gExplanationSmallFont);
     if (smallFont_ != nullptr) {
         TTF_CloseFont(smallFont_);
         smallFont_ = nullptr;
@@ -249,45 +449,52 @@ void IdiomChainScene::shutdown() {
 }
 
 bool IdiomChainScene::loadFonts() {
-    for (const std::string& path : candidateFontPaths()) {
-        titleFont_ = TTF_OpenFont(path.c_str(), 42);
-        subtitleFont_ = TTF_OpenFont(path.c_str(), 26);
-        bodyFont_ = TTF_OpenFont(path.c_str(), 20);
-        smallFont_ = TTF_OpenFont(path.c_str(), 15);
-        if (titleFont_ != nullptr && subtitleFont_ != nullptr && bodyFont_ != nullptr && smallFont_ != nullptr) {
-            return true;
-        }
-        if (titleFont_ != nullptr) {
-            TTF_CloseFont(titleFont_);
-            titleFont_ = nullptr;
-        }
-        if (subtitleFont_ != nullptr) {
-            TTF_CloseFont(subtitleFont_);
-            subtitleFont_ = nullptr;
-        }
-        if (bodyFont_ != nullptr) {
-            TTF_CloseFont(bodyFont_);
-            bodyFont_ = nullptr;
-        }
-        if (smallFont_ != nullptr) {
-            TTF_CloseFont(smallFont_);
-            smallFont_ = nullptr;
-        }
+    const auto kaiPaths = kaiFontPaths();
+    const auto songPaths = songFontPaths();
+    const auto sansPaths = sansFontPaths();
+
+    // 字号保持原样：标题 42，副标题/按钮 26，正文 20，小字 15。
+    // 只更换字体风格：标题/成语用楷体，释义/说明用宋体，按钮/数字/功能文字用雅黑/黑体。
+    titleFont_ = openFirstFont(kaiPaths, 42);
+    if (titleFont_ == nullptr) {
+        titleFont_ = openFirstFont(sansPaths, 42);
     }
-    return false;
+
+    subtitleFont_ = openFirstFont(sansPaths, 26);
+    bodyFont_ = openFirstFont(sansPaths, 20);
+    smallFont_ = openFirstFont(sansPaths, 15);
+
+    gSubtitleStyleFont = openFirstFont(songPaths, 26);
+    if (gSubtitleStyleFont == nullptr) {
+        gSubtitleStyleFont = openFirstFont(kaiPaths, 26);
+    }
+
+    gCandidateSubtitleFont = openFirstFont(kaiPaths, 26);
+    gCandidateBodyFont = openFirstFont(kaiPaths, 20);
+    gCandidateSmallFont = openFirstFont(kaiPaths, 18);
+
+    gExplanationBodyFont = openFirstFont(songPaths, 20);
+    gExplanationSmallFont = openFirstFont(songPaths, 15);
+
+    if (titleFont_ == nullptr || subtitleFont_ == nullptr || bodyFont_ == nullptr || smallFont_ == nullptr) {
+        closeFontPtr(titleFont_);
+        closeFontPtr(subtitleFont_);
+        closeFontPtr(bodyFont_);
+        closeFontPtr(smallFont_);
+        closeFontPtr(gSubtitleStyleFont);
+        closeFontPtr(gCandidateSubtitleFont);
+        closeFontPtr(gCandidateBodyFont);
+        closeFontPtr(gCandidateSmallFont);
+        closeFontPtr(gExplanationBodyFont);
+        closeFontPtr(gExplanationSmallFont);
+        return false;
+    }
+
+    return true;
 }
 
 std::vector<std::string> IdiomChainScene::candidateFontPaths() {
-    return {
-        "assets/IdiomChainGame/fonts/NotoSansSC-Regular.otf",
-        "assets/IdiomChainGame/fonts/NotoSansCJKsc-Regular.otf",
-        "assets/fonts/NotoSansSC-Regular.otf",
-        "assets/fonts/msyh.ttc",
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/msyhbd.ttc",
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/simsun.ttc"
-    };
+    return sansFontPaths();
 }
 
 void IdiomChainScene::handleEvent(const SDL_Event& event, bool& running, int& resultCode) {
@@ -583,8 +790,8 @@ void IdiomChainScene::handleGameEvent(const SDL_Event& event) {
             return;
         }
         if (activeModeIndex_ != 1 && pointInRect(mx, my, gameHintButton_.rect)) {
-            const auto hint = controller_.requestHint();
-            hintMessage_ = hint.has_value() ? ("提示：下一步可考虑 “" + *hint + "”。") : controller_.getLastMessage();
+            controller_.requestHint();
+            hintMessage_ = controller_.getLastMessage();
             statusMessage_ = controller_.getLastMessage();
             return;
         }
@@ -613,8 +820,8 @@ void IdiomChainScene::handleGameEvent(const SDL_Event& event) {
         if (activeModeIndex_ == 2) {
             for (const auto& button : mediumButtons_) {
                 if (pointInRect(mx, my, button.rect)) {
-                    const bool ok = controller_.submitMediumChoiceById(button.actionId);
-                    statusMessage_ = ok ? "已提交该步选择。" : controller_.getLastMessage();
+                    controller_.submitMediumChoiceById(button.actionId);
+                    statusMessage_ = controller_.getLastMessage();
                     refreshGameCaches(true);
                     return;
                 }
@@ -912,9 +1119,9 @@ void IdiomChainScene::refreshBattleSetupButtons() {
     battleModeMediumButton_ = ButtonSpec{makeRect(120 + 20, 250 + 126, 210, 50), "对战中等模式", 4, true};
     battleModeHardButton_ = ButtonSpec{makeRect(120 + 20, 250 + 188, 210, 50), "对战困难模式", 5, true};
 
-    battlePlayerField_ = makeRect(x, 438, w, 48);
-    battleIpField_ = makeRect(x, 500, w, 48);
-    battlePortField_ = makeRect(x, 562, w, 48);
+    battlePlayerField_ = makeRect(x, 428, w, 48);
+    battleIpField_ = makeRect(x, 497, w, 48);
+    battlePortField_ = makeRect(x, 566, w, 48);
 
     battleConfirmButton_ = ButtonSpec{makeRect(x, 624, w, 50),
                                       battleHostSelected_ ? "创建并等待" : "连接房主",
@@ -1069,20 +1276,26 @@ void IdiomChainScene::drawWrappedText(TTF_Font* font,
     if (font == nullptr || text.empty()) {
         return;
     }
+
     SDL_Surface* surface = TTF_RenderUTF8_Blended_Wrapped(font, text.c_str(), color, rect.w);
     if (surface == nullptr) {
         return;
     }
+
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
     if (texture == nullptr) {
         SDL_FreeSurface(surface);
         return;
     }
+
     SDL_Rect dst{rect.x, rect.y, surface->w, surface->h};
     SDL_FreeSurface(surface);
-    SDL_RenderSetClipRect(renderer_, &rect);
-    SDL_RenderCopy(renderer_, texture, nullptr, &dst);
-    SDL_RenderSetClipRect(renderer_, nullptr);
+
+    {
+        ClipGuard clip(renderer_, rect);
+        SDL_RenderCopy(renderer_, texture, nullptr, &dst);
+    }
+
     SDL_DestroyTexture(texture);
 }
 
@@ -1109,11 +1322,13 @@ int IdiomChainScene::drawWrappedTextScrollable(TTF_Font* font,
     if (font == nullptr || rect.w <= 0 || rect.h <= 0) {
         return 0;
     }
+
     const std::string safeText = text.empty() ? " " : text;
     SDL_Surface* surface = TTF_RenderUTF8_Blended_Wrapped(font, safeText.c_str(), color, rect.w - 10);
     if (surface == nullptr) {
         return 0;
     }
+
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
     const int contentHeight = surface->h;
     if (texture == nullptr) {
@@ -1127,19 +1342,23 @@ int IdiomChainScene::drawWrappedTextScrollable(TTF_Font* font,
     SDL_Rect dst{rect.x, rect.y - scrollOffset, surface->w, surface->h};
     SDL_FreeSurface(surface);
 
-    SDL_RenderSetClipRect(renderer_, &rect);
-    SDL_RenderCopy(renderer_, texture, nullptr, &dst);
-    SDL_RenderSetClipRect(renderer_, nullptr);
+    {
+        ClipGuard clip(renderer_, rect);
+        SDL_RenderCopy(renderer_, texture, nullptr, &dst);
+    }
+
     SDL_DestroyTexture(texture);
 
     if (contentHeight > rect.h) {
         SDL_Rect track{rect.x + rect.w - 6, rect.y, 4, rect.h};
         fillRect(renderer_, track, rgb(232, 232, 232));
+
         const int thumbH = std::max(24, rect.h * rect.h / std::max(contentHeight, rect.h));
         const int thumbY = rect.y + (rect.h - thumbH) * scrollOffset / std::max(1, maxOffset);
         SDL_Rect thumb{track.x, thumbY, track.w, thumbH};
         fillRect(renderer_, thumb, rgb(120, 120, 120));
     }
+
     return contentHeight;
 }
 
@@ -1192,16 +1411,20 @@ void IdiomChainScene::drawFittedTextInRect(TTF_Font* preferredFont,
         dst.y = rect.y + (rect.h - std::min(surface->h, rect.h - 4)) / 2;
     }
     SDL_FreeSurface(surface);
-    SDL_RenderSetClipRect(renderer_, &rect);
-    SDL_RenderCopy(renderer_, texture, nullptr, &dst);
-    SDL_RenderSetClipRect(renderer_, nullptr);
+
+    {
+        ClipGuard clip(renderer_, rect);
+        SDL_RenderCopy(renderer_, texture, nullptr, &dst);
+    }
+
     SDL_DestroyTexture(texture);
 }
 
 void IdiomChainScene::drawPanel(const SDL_Rect& rect, const std::string& title) const {
     fillRect(renderer_, rect, rgb(250, 248, 243));
     strokeRect(renderer_, rect, rgb(28, 28, 28), 2);
-    drawText(subtitleFont_, title, rect.x + 18, rect.y + 14, rgb(20, 20, 20), false);
+    drawText(gSubtitleStyleFont != nullptr ? gSubtitleStyleFont : subtitleFont_,
+             title, rect.x + 18, rect.y + 14, rgb(20, 20, 20), false);
 }
 
 void IdiomChainScene::drawButton(const ButtonSpec& button, bool primary) const {
@@ -1312,21 +1535,21 @@ void IdiomChainScene::render() {
 
 void IdiomChainScene::renderMainMenu() {
     drawText(titleFont_, "成语接龙", kWindowWidth / 2, 130, rgb(16, 16, 16), true);
-    drawText(subtitleFont_, "最短路径模块", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
+    // drawText(gSubtitleStyleFont != nullptr ? gSubtitleStyleFont : subtitleFont_, "最短路径模块", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
 
     for (std::size_t i = 0; i < mainMenuButtons_.size(); ++i) {
-        drawButton(mainMenuButtons_[i], i == 0);
+        drawButton(mainMenuButtons_[i], false);
     }
 }
 
 void IdiomChainScene::renderDifficultyMenu() {
     drawText(titleFont_, "成语接龙", kWindowWidth / 2, 130, rgb(16, 16, 16), true);
-    drawText(subtitleFont_, "单人游戏 · 选择难度", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
+    drawText(gSubtitleStyleFont != nullptr ? gSubtitleStyleFont : subtitleFont_, "单人游戏 · 选择难度", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
 
     SDL_Rect info = makeRect(200, 220, 800, 240);
     drawPanel(info, "模式说明");
     difficultyInfoContentHeight_ = drawWrappedTextScrollable(
-        bodyFont_,
+        gExplanationBodyFont != nullptr ? gExplanationBodyFont : bodyFont_,
         R"(简单模式：给出最优路径和少量干扰成语，玩家通过拖拽完成排序。
 
 中等模式：每一步显示 4 个可达候选，均能到达终点，但步数优劣不同。
@@ -1337,13 +1560,13 @@ void IdiomChainScene::renderDifficultyMenu() {
         difficultyInfoScroll_);
 
     for (std::size_t i = 0; i < difficultyButtons_.size(); ++i) {
-        drawButton(difficultyButtons_[i], i == 0);
+        drawButton(difficultyButtons_[i], false);
     }
 }
 
 void IdiomChainScene::renderBattleSetup() {
     drawText(titleFont_, "成语接龙", kWindowWidth / 2, 130, rgb(16, 16, 16), true);
-    drawText(subtitleFont_, "多人游戏 · 创建/加入房间", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
+    drawText(gSubtitleStyleFont != nullptr ? gSubtitleStyleFont : subtitleFont_, "多人游戏 · 创建/加入房间", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
 
     SDL_Rect leftInfo = makeRect(120, 250, 250, 280);
     SDL_Rect rightInfo = makeRect(830, 250, 250, 280);
@@ -1355,7 +1578,7 @@ void IdiomChainScene::renderBattleSetup() {
     drawButton(battleModeHardButton_, battleModeIndex_ == 3);
 
     mainMenuRightContentHeight_ = drawWrappedTextScrollable(
-        bodyFont_,
+        gExplanationBodyFont != nullptr ? gExplanationBodyFont : bodyFont_,
         battleHostSelected_
             ? "创建房间后停留在等待页。\n\n客户端加入成功、房主同步题目后，会自动进入对战。"
             : "加入房间时请填写房主 IP 和端口。\n\n连接成功后等待房主同步题目。",
@@ -1368,7 +1591,7 @@ void IdiomChainScene::renderBattleSetup() {
     drawInputField(battlePlayerField_, "玩家名称", battlePlayerInput_, activeTextField_ == TextField::PlayerName);
     drawInputField(battleIpField_, "房主 IP", battleHostIpInput_, activeTextField_ == TextField::HostIp);
     drawInputField(battlePortField_, "端口", battlePortInput_, activeTextField_ == TextField::Port);
-    drawButton(battleConfirmButton_, true);
+    drawButton(battleConfirmButton_, false);
     drawButton(battleSetupBackButton_);
 
     if (!statusMessage_.empty()) {
@@ -1382,7 +1605,7 @@ void IdiomChainScene::renderBattleSetup() {
 void IdiomChainScene::renderBattleLobby() {
     const GameSession& session = controller_.getSession();
     drawText(titleFont_, "成语接龙", kWindowWidth / 2, 130, rgb(16, 16, 16), true);
-    drawText(subtitleFont_, "多人游戏 · 等待房间开始", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
+    drawText(gSubtitleStyleFont != nullptr ? gSubtitleStyleFont : subtitleFont_, "多人游戏 · 等待房间开始", kWindowWidth / 2, 178, rgb(88, 88, 88), true);
 
     SDL_Rect leftInfo = makeRect(120, 250, 250, 280);
     SDL_Rect rightInfo = makeRect(830, 250, 250, 280);
@@ -1390,7 +1613,7 @@ void IdiomChainScene::renderBattleLobby() {
     drawPanel(rightInfo, "连接状态");
 
     mainMenuLeftContentHeight_ = drawWrappedTextScrollable(
-        bodyFont_,
+        gExplanationBodyFont != nullptr ? gExplanationBodyFont : bodyFont_,
         std::string("玩家：") + session.playerName + "\n"
         + "身份：" + (session.battleIsHost ? std::string("房主") : std::string("客户端")) + "\n"
         + "模式：" + modeText(battleModeIndex_),
@@ -1404,7 +1627,7 @@ void IdiomChainScene::renderBattleLobby() {
     oss << "状态：" << controller_.getLastMessage() << "\n";
     oss << "当双方握手完成且题目同步后，将自动进入对战。";
     mainMenuRightContentHeight_ = drawWrappedTextScrollable(
-        bodyFont_,
+        gExplanationBodyFont != nullptr ? gExplanationBodyFont : bodyFont_,
         oss.str(),
         makeRect(rightInfo.x + 18, rightInfo.y + 58, rightInfo.w - 36, rightInfo.h - 74),
         rgb(78, 78, 78),
@@ -1426,6 +1649,58 @@ void IdiomChainScene::renderGame() {
     drawPanel(centerPanel, "答题区");
     drawPanel(rightPanel, isBattleMode(session.mode) ? "对手状态 / 释义" : "释义 / 提示");
 
+    auto drawCandidateButton = [&](const ButtonSpec& button, bool primary) {
+        const bool hovered = button.enabled && pointInRect(mouseX_, mouseY_, button.rect);
+        SDL_Color fill = primary ? rgb(220, 233, 224) : rgb(246, 244, 239);
+        SDL_Color text = primary ? rgb(40, 90, 65) : rgb(20, 20, 20);
+        if (!button.enabled) {
+            fill = rgb(225, 225, 225);
+            text = rgb(120, 120, 120);
+        } else if (hovered) {
+            fill = primary ? rgb(198, 223, 208) : rgb(232, 228, 220);
+        }
+
+        fillRect(renderer_, button.rect, fill);
+        strokeRect(renderer_, button.rect, hovered ? rgb(58, 112, 82) : rgb(30, 30, 30), hovered ? 3 : 2);
+        drawFittedTextWithFonts(renderer_,
+                                {gCandidateSubtitleFont, gCandidateBodyFont, gCandidateSmallFont, bodyFont_, smallFont_},
+                                button.label,
+                                makeRect(button.rect.x + 6, button.rect.y + 4, button.rect.w - 12, button.rect.h - 8),
+                                text,
+                                true,
+                                true);
+    };
+
+    auto drawCandidateCard = [&](const SDL_Rect& rect,
+                                 const std::string& title,
+                                 const std::string& content,
+                                 bool emphasized) {
+        fillRect(renderer_, rect, emphasized ? rgb(244, 233, 205) : rgb(255, 255, 255));
+        strokeRect(renderer_, rect, rgb(36, 36, 36), 1);
+
+        if (rect.h <= 44) {
+            drawFittedTextWithFonts(renderer_,
+                                    {gCandidateSmallFont, gCandidateBodyFont},
+                                    title + "：" + content,
+                                    makeRect(rect.x + 8, rect.y + 4, rect.w - 16, rect.h - 8),
+                                    rgb(22, 22, 22),
+                                    false,
+                                    true);
+            return;
+        }
+
+        SDL_Rect titleRect = makeRect(rect.x + 10, rect.y + 8, rect.w - 20, 22);
+        SDL_Rect contentRect = makeRect(rect.x + 12, rect.y + 34, rect.w - 24, std::max(8, rect.h - 40));
+        drawFittedTextWithFonts(renderer_,
+                                {gCandidateBodyFont, gCandidateSmallFont,},
+                                title,
+                                titleRect,
+                                rgb(22, 22, 22),
+                                false,
+                                true);
+        drawWrappedText(smallFont_, content, contentRect, rgb(92, 92, 92));
+    };
+
     SDL_Rect timeBox = makeRect(leftPanel.x + 18, leftPanel.y + 48, leftPanel.w - 36, 52);
     SDL_Rect stepBox = makeRect(leftPanel.x + 18, leftPanel.y + 116, 96, 84);
     SDL_Rect bestBox = makeRect(leftPanel.x + 126, leftPanel.y + 116, 96, 84);
@@ -1436,7 +1711,7 @@ void IdiomChainScene::renderGame() {
     strokeRect(renderer_, stepBox, rgb(36, 36, 36), 1);
     strokeRect(renderer_, bestBox, rgb(36, 36, 36), 1);
 
-    drawFittedTextInRect(bodyFont_, "当前用时：" + formatSeconds(session.elapsedSeconds),
+    drawFittedTextInRect(bodyFont_, "剩余时间：" + formatSeconds(session.timeLimitSeconds - session.elapsedSeconds),
                          makeRect(timeBox.x + 8, timeBox.y + 6, timeBox.w - 16, timeBox.h - 12),
                          rgb(20, 20, 20), false, true);
     drawText(smallFont_, "步数", stepBox.x + stepBox.w / 2, stepBox.y + 22, rgb(92, 92, 92), true);
@@ -1504,14 +1779,14 @@ void IdiomChainScene::renderGame() {
 
         if (activeModeIndex_ == 2 || activeModeIndex_ == 3) {
             gamePathContentHeight_ = drawWrappedTextScrollable(
-                smallFont_,
+                gCandidateSmallFont != nullptr ? gCandidateSmallFont : smallFont_,
                 pathText,
                 pathViewport,
                 rgb(92, 92, 92),
                 gamePathScroll_);
         } else {
             drawWrappedText(
-                smallFont_,
+                gCandidateSmallFont != nullptr ? gCandidateSmallFont : smallFont_,
                 pathText,
                 pathViewport,
                 rgb(92, 92, 92));
@@ -1540,26 +1815,26 @@ void IdiomChainScene::renderGame() {
             const std::string& word = (tile.poolIndex >= 0 && static_cast<std::size_t>(tile.poolIndex) < poolWords.size())
                                           ? poolWords[static_cast<std::size_t>(tile.poolIndex)]
                                           : std::string("?");
-            drawCard(tile.rect, word, tile.inSelectedZone ? "已放入路径区" : "候选成语", false);
+            drawCandidateCard(tile.rect, word, tile.inSelectedZone ? "已放入路径区" : "候选成语", false);
         }
         if (draggingEasyTile_ && draggedEasyPoolIndex_ >= 0 && static_cast<std::size_t>(draggedEasyPoolIndex_) < poolWords.size()) {
-            drawCard(makeRect(dragMouseX_ - kTileWidth / 2,
-                              dragMouseY_ - kTileHeight / 2,
-                              kTileWidth,
-                              kTileHeight),
-                     poolWords[static_cast<std::size_t>(draggedEasyPoolIndex_)],
-                     "拖动中",
-                     true);
+            drawCandidateCard(makeRect(dragMouseX_ - kTileWidth / 2,
+                                       dragMouseY_ - kTileHeight / 2,
+                                       kTileWidth,
+                                       kTileHeight),
+                              poolWords[static_cast<std::size_t>(draggedEasyPoolIndex_)],
+                              "拖动中",
+                              true);
         }
 
         easySubmitButton_ = ButtonSpec{makeRect(centerPanel.x + 86, centerPanel.y + 570, 140, 46), "提交排序", 1, true};
         easyResetButton_ = ButtonSpec{makeRect(centerPanel.x + 246, centerPanel.y + 570, 140, 46), "全部归位", 2, true};
-        drawButton(easySubmitButton_, true);
+        drawButton(easySubmitButton_, false);
         drawButton(easyResetButton_);
     } else if (activeModeIndex_ == 2) {
         drawText(bodyFont_, "本步候选（点击提交下一步）", centerPanel.x + 24, centerPanel.y + 240, rgb(70, 70, 70), false);
         for (std::size_t i = 0; i < mediumButtons_.size(); ++i) {
-            drawButton(mediumButtons_[i], i == 0);
+            drawCandidateButton(mediumButtons_[i], false);
         }
     } else {
         SDL_Rect inputBox = makeRect(centerPanel.x + 24, centerPanel.y + 300, centerPanel.w - 48, 54);
@@ -1609,10 +1884,10 @@ void IdiomChainScene::renderGame() {
             makeRect(centerPanel.x + centerPanel.w - 164, centerPanel.y + 368, 140, 44),
             "提交输入", 1, true
         };
-        drawButton(hardSubmitButton_, true);
+        drawButton(hardSubmitButton_, false);
 
         for (std::size_t i = 0; i < hardCandidateButtons_.size(); ++i) {
-            drawButton(hardCandidateButtons_[i], i == 0);
+            drawCandidateButton(hardCandidateButtons_[i], false);
         }
     }
 
@@ -1633,7 +1908,7 @@ void IdiomChainScene::renderGame() {
     if (!revealedAnswerText_.empty()) {
         explanationText += "\n\n最优解：\n" + revealedAnswerText_;
     }
-    gameExplanationContentHeight_ = drawWrappedTextScrollable(bodyFont_, explanationText,
+    gameExplanationContentHeight_ = drawWrappedTextScrollable(gExplanationBodyFont != nullptr ? gExplanationBodyFont : bodyFont_, explanationText,
                     makeRect(rightPanel.x + 16, rightPanel.y + 52, rightPanel.w - 32, rightPanel.h - 68),
                     rgb(72, 72, 72),
                     gameExplanationScroll_);
@@ -1644,7 +1919,7 @@ void IdiomChainScene::renderResult() {
     const int diffSteps = session.bestStepCount >= 0 ? std::max(0, session.stepCount - session.bestStepCount) : 0;
 
     drawText(titleFont_, "本局结算", kWindowWidth / 2, 88, rgb(20, 20, 20), true);
-    drawText(subtitleFont_,
+    drawText(gSubtitleStyleFont != nullptr ? gSubtitleStyleFont : subtitleFont_,
              isBattleMode(session.mode)
                  ? (session.battleWinnerText.empty() ? "双人对战结算" : session.battleWinnerText)
                  : (session.success ? "挑战成功" : "挑战失败"),
@@ -1686,7 +1961,7 @@ void IdiomChainScene::renderResult() {
         std::string centerText = "你的路径：\n" + (currentPathText().empty() ? "暂无记录。" : currentPathText())
                                + "\n\n对手路径：\n" + (remotePathText().empty() ? "暂无同步路径。" : remotePathText());
         resultBestRouteContentHeight_ = drawWrappedTextScrollable(
-            smallFont_, centerText,
+            gCandidateSmallFont != nullptr ? gCandidateSmallFont : smallFont_, centerText,
             makeRect(pathCard.x + 12, pathCard.y + 34, pathCard.w - 24, pathCard.h - 42),
             rgb(92, 92, 92),
             resultBestRouteScroll_);
@@ -1698,7 +1973,7 @@ void IdiomChainScene::renderResult() {
                              makeRect(myRouteCard.x + 10, myRouteCard.y + 8, myRouteCard.w - 20, 22),
                              rgb(22, 22, 22), false, true);
         resultMyRouteContentHeight_ = drawWrappedTextScrollable(
-            smallFont_,
+            gCandidateSmallFont != nullptr ? gCandidateSmallFont : smallFont_,
             currentPathText().empty() ? "暂无记录。" : currentPathText(),
             makeRect(myRouteCard.x + 12, myRouteCard.y + 34, myRouteCard.w - 24, myRouteCard.h - 42),
             rgb(92, 92, 92),
@@ -1711,7 +1986,7 @@ void IdiomChainScene::renderResult() {
                              makeRect(bestRouteCard.x + 10, bestRouteCard.y + 8, bestRouteCard.w - 20, 22),
                              rgb(22, 22, 22), false, true);
         resultBestRouteContentHeight_ = drawWrappedTextScrollable(
-            smallFont_,
+            gCandidateSmallFont != nullptr ? gCandidateSmallFont : smallFont_,
             joinWords(answerPathWords(), " -> "),
             makeRect(bestRouteCard.x + 12, bestRouteCard.y + 34, bestRouteCard.w - 24, bestRouteCard.h - 42),
             rgb(92, 92, 92),
@@ -1734,7 +2009,7 @@ void IdiomChainScene::renderResult() {
             explanationText += explanations[i];
         }
     }
-    resultExplanationContentHeight_ = drawWrappedTextScrollable(bodyFont_, explanationText,
+    resultExplanationContentHeight_ = drawWrappedTextScrollable(gExplanationBodyFont != nullptr ? gExplanationBodyFont : bodyFont_, explanationText,
                     makeRect(rightPanel.x + 16, rightPanel.y + 54, rightPanel.w - 32, rightPanel.h - 70),
                     rgb(72, 72, 72),
                     resultExplanationScroll_);
@@ -1742,14 +2017,14 @@ void IdiomChainScene::renderResult() {
     resultAgainButton_ = ButtonSpec{makeRect(kWindowWidth / 2 - 220, 660, 140, 50), isBattleMode(session.mode) ? "再开房间" : "再来一局", 1, true};
     resultRankButton_ = ButtonSpec{makeRect(kWindowWidth / 2 - 70, 660, 140, 50), "排行榜", 2, true};
     resultMenuButton_ = ButtonSpec{makeRect(kWindowWidth / 2 + 80, 660, 140, 50), "主菜单", 3, true};
-    drawButton(resultAgainButton_, true);
+    drawButton(resultAgainButton_, false);
     drawButton(resultRankButton_);
     drawButton(resultMenuButton_);
 }
 
 void IdiomChainScene::renderLeaderboard() {
     drawText(titleFont_, "排行榜", kWindowWidth / 2, 88, rgb(20, 20, 20), true);
-    drawText(subtitleFont_, "总积分排行 + 最近对局记录", kWindowWidth / 2, 128, rgb(88, 88, 88), true);
+    drawText(gSubtitleStyleFont != nullptr ? gSubtitleStyleFont : subtitleFont_, "总积分排行 + 最近对局记录", kWindowWidth / 2, 128, rgb(88, 88, 88), true);
 
     SDL_Rect rankPanel = makeRect(50, 180, 760, 500);
     SDL_Rect historyPanel = makeRect(830, 180, 320, 500);
@@ -1763,23 +2038,26 @@ void IdiomChainScene::renderLeaderboard() {
     const SDL_Rect rankViewport = makeRect(header.x, header.y + 58, header.w, rankPanel.h - 132);
     leaderboardRankContentHeight_ = static_cast<int>(leaderboardCache_.size()) * 50;
     clampScrollOffset(leaderboardRankScroll_, leaderboardRankContentHeight_, rankViewport.h);
-    SDL_RenderSetClipRect(renderer_, &rankViewport);
-    int rowY = header.y + 58 - leaderboardRankScroll_;
-    for (std::size_t i = 0; i < leaderboardCache_.size(); ++i) {
-        SDL_Rect row = makeRect(header.x, rowY, header.w, 44);
-        drawSimpleTableRow(row,
-                           {
-                               std::to_string(static_cast<int>(i) + 1),
-                               leaderboardCache_[i].playerName,
-                               std::to_string(leaderboardCache_[i].totalScore),
-                               "-",
-                               (i == 0 ? "榜首" : i == 1 ? "强者" : i == 2 ? "高手" : "玩家")
-                           },
-                           widths,
-                           false);
-        rowY += 50;
+
+    {
+        ClipGuard clip(renderer_, rankViewport);
+        int rowY = header.y + 58 - leaderboardRankScroll_;
+        for (std::size_t i = 0; i < leaderboardCache_.size(); ++i) {
+            SDL_Rect row = makeRect(header.x, rowY, header.w, 44);
+            drawSimpleTableRow(row,
+                               {
+                                   std::to_string(static_cast<int>(i) + 1),
+                                   leaderboardCache_[i].playerName,
+                                   std::to_string(leaderboardCache_[i].totalScore),
+                                   "-",
+                                   (i == 0 ? "榜首" : i == 1 ? "强者" : i == 2 ? "高手" : "玩家")
+                               },
+                               widths,
+                               false);
+            rowY += 50;
+        }
     }
-    SDL_RenderSetClipRect(renderer_, nullptr);
+
     if (leaderboardRankContentHeight_ > rankViewport.h) {
         SDL_Rect track{rankViewport.x + rankViewport.w - 6, rankViewport.y, 4, rankViewport.h};
         fillRect(renderer_, track, rgb(232, 232, 232));
@@ -1791,33 +2069,55 @@ void IdiomChainScene::renderLeaderboard() {
 
     const SDL_Rect historyViewport = makeRect(historyPanel.x + 16, historyPanel.y + 56, historyPanel.w - 32, historyPanel.h - 72);
     if (historyCache_.empty()) {
-        leaderboardHistoryContentHeight_ = drawWrappedTextScrollable(bodyFont_, "暂无记录。完成至少一局后这里会显示最近的对局信息。",
-                        makeRect(historyPanel.x + 16, historyPanel.y + 56, historyPanel.w - 32, 120), rgb(82, 82, 82), leaderboardHistoryScroll_);
+        leaderboardHistoryContentHeight_ = drawWrappedTextScrollable(
+            bodyFont_,
+            "暂无记录。完成至少一局后这里会显示最近的对局信息。",
+            makeRect(historyPanel.x + 16, historyPanel.y + 56, historyPanel.w - 32, 120),
+            rgb(82, 82, 82),
+            leaderboardHistoryScroll_);
     } else {
-        leaderboardHistoryContentHeight_ = static_cast<int>(historyCache_.size()) * 74;
-        clampScrollOffset(leaderboardHistoryScroll_, leaderboardHistoryContentHeight_, historyViewport.h);
-        SDL_RenderSetClipRect(renderer_, &historyViewport);
+    const int historyCardHeight = 100;  // 每个历史记录小卡片高度
+    const int historyCardGap = 12;      // 小卡片之间的间距
+    const int historyRowStep = historyCardHeight + historyCardGap;
+
+    leaderboardHistoryContentHeight_ = static_cast<int>(historyCache_.size()) * historyRowStep;
+    clampScrollOffset(leaderboardHistoryScroll_, leaderboardHistoryContentHeight_, historyViewport.h);
+
+    {
+        ClipGuard clip(renderer_, historyViewport);
+
         int hy = historyPanel.y + 56 - leaderboardHistoryScroll_;
         for (std::size_t i = 0; i < historyCache_.size(); ++i) {
-            SDL_Rect card = makeRect(historyPanel.x + 16, hy, historyPanel.w - 32, 66);
+            SDL_Rect card = makeRect(
+                historyPanel.x + 16,
+                hy,
+                historyPanel.w - 32,
+                historyCardHeight
+            );
+
             const GameRecord& rec = historyCache_[i];
             std::ostringstream oss;
             oss << rec.playerName << "｜" << rec.difficulty << "\n"
                 << rec.startWord << " -> " << rec.targetWord << "\n"
                 << "用时：" << formatSeconds(rec.elapsedSeconds) << "    得分：" << rec.score;
+
             drawCard(card, "对局记录", oss.str(), false);
-            hy += 74;
-        }
-        SDL_RenderSetClipRect(renderer_, nullptr);
-        if (leaderboardHistoryContentHeight_ > historyViewport.h) {
-            SDL_Rect track{historyViewport.x + historyViewport.w - 6, historyViewport.y, 4, historyViewport.h};
-            fillRect(renderer_, track, rgb(232, 232, 232));
-            const int maxOffset = std::max(1, leaderboardHistoryContentHeight_ - historyViewport.h);
-            const int thumbH = std::max(24, historyViewport.h * historyViewport.h / leaderboardHistoryContentHeight_);
-            const int thumbY = historyViewport.y + (historyViewport.h - thumbH) * leaderboardHistoryScroll_ / maxOffset;
-            fillRect(renderer_, makeRect(track.x, thumbY, track.w, thumbH), rgb(120, 120, 120));
+            hy += historyRowStep;
         }
     }
+
+    if (leaderboardHistoryContentHeight_ > historyViewport.h) {
+        SDL_Rect track{historyViewport.x + historyViewport.w - 6, historyViewport.y, 4, historyViewport.h};
+        fillRect(renderer_, track, rgb(232, 232, 232));
+
+        const int maxOffset = std::max(1, leaderboardHistoryContentHeight_ - historyViewport.h);
+        const int thumbH = std::max(24, historyViewport.h * historyViewport.h / leaderboardHistoryContentHeight_);
+        const int thumbY = historyViewport.y + (historyViewport.h - thumbH) * leaderboardHistoryScroll_ / maxOffset;
+
+        fillRect(renderer_, makeRect(track.x, thumbY, track.w, thumbH), rgb(120, 120, 120));
+    }
+    
+}
 
     drawButton(leaderboardBackButton_);
 }
@@ -1887,7 +2187,7 @@ bool IdiomChainScene::submitHardInputBuffer() {
         return false;
     }
     const bool ok = controller_.submitHardInput(inputBuffer_);
-    statusMessage_ = ok ? "已提交一步。" : controller_.getLastMessage();
+    statusMessage_ = controller_.getLastMessage();
     if (ok) {
         inputBuffer_.clear();
         imeComposition_.clear();

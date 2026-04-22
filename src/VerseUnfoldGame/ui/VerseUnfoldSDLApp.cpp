@@ -15,32 +15,49 @@ VerseUnfoldSDLApp::~VerseUnfoldSDLApp() {
 }
 
 bool VerseUnfoldSDLApp::init() {
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        std::cerr << "[VerseUnfoldSDLApp] SDL_Init failed: " << SDL_GetError() << std::endl;
-        return false;
+    return init(nullptr, nullptr);
+}
+
+bool VerseUnfoldSDLApp::init(SDL_Window* externalWindow, SDL_Renderer* externalRenderer) {
+    if ((SDL_WasInit(SDL_INIT_VIDEO) & SDL_INIT_VIDEO) == 0) {
+        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+            std::cerr << "[VerseUnfoldSDLApp] SDL_Init failed: " << SDL_GetError() << std::endl;
+            return false;
+        }
+        ownsSDL = true;
     }
 
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
 
-    window = SDL_CreateWindow(
-        "句读之间 - VerseUnfoldGame",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        WINDOW_WIDTH,
-        WINDOW_HEIGHT,
-        SDL_WINDOW_SHOWN
-    );
-    if (window == nullptr) {
-        std::cerr << "[VerseUnfoldSDLApp] SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
-        cleanup();
-        return false;
-    }
+    if (externalWindow != nullptr && externalRenderer != nullptr) {
+        window = externalWindow;
+        renderer = externalRenderer;
+        ownsWindowRenderer = false;
+        SDL_SetWindowTitle(window, "句读之间 - VerseUnfoldGame");
+        SDL_ShowWindow(window);
+        SDL_RaiseWindow(window);
+    } else {
+        ownsWindowRenderer = true;
+        window = SDL_CreateWindow(
+            "句读之间 - VerseUnfoldGame",
+            SDL_WINDOWPOS_CENTERED,
+            SDL_WINDOWPOS_CENTERED,
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
+            SDL_WINDOW_SHOWN
+        );
+        if (window == nullptr) {
+            std::cerr << "[VerseUnfoldSDLApp] SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
+            cleanup();
+            return false;
+        }
 
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (renderer == nullptr) {
-        std::cerr << "[VerseUnfoldSDLApp] SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
-        cleanup();
-        return false;
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        if (renderer == nullptr) {
+            std::cerr << "[VerseUnfoldSDLApp] SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
+            cleanup();
+            return false;
+        }
     }
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -118,16 +135,21 @@ void VerseUnfoldSDLApp::cleanup() {
     currentScreen.reset();
     assets.reset();
 
-    if (renderer != nullptr) {
-        SDL_DestroyRenderer(renderer);
-        renderer = nullptr;
+    if (ownsWindowRenderer) {
+        if (renderer != nullptr) {
+            SDL_DestroyRenderer(renderer);
+        }
+        if (window != nullptr) {
+            SDL_DestroyWindow(window);
+        }
     }
-    if (window != nullptr) {
-        SDL_DestroyWindow(window);
-        window = nullptr;
-    }
-    if (SDL_WasInit(SDL_INIT_VIDEO)) {
+    renderer = nullptr;
+    window = nullptr;
+    ownsWindowRenderer = true;
+
+    if (ownsSDL) {
         SDL_Quit();
+        ownsSDL = false;
     }
 }
 

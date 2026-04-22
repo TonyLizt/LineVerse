@@ -22,6 +22,7 @@ public:
     ~IdiomChainScene();
 
     int run();
+    int run(SDL_Window* externalWindow, SDL_Renderer* externalRenderer);
 
 private:
     enum class ViewMode {
@@ -54,7 +55,7 @@ private:
         bool inSelectedZone{false};
     };
 
-    bool initialize();
+    bool initialize(SDL_Window* externalWindow = nullptr, SDL_Renderer* externalRenderer = nullptr);
     void shutdown();
     bool loadFonts();
     static std::vector<std::string> candidateFontPaths();
@@ -158,6 +159,9 @@ private:
 
     SDL_Window* window_;
     SDL_Renderer* renderer_;
+    bool ownsWindowRenderer_{true};
+    bool ownsSDL_{false};
+    bool ownsTTF_{false};
     TTF_Font* titleFont_;
     TTF_Font* subtitleFont_;
     TTF_Font* bodyFont_;

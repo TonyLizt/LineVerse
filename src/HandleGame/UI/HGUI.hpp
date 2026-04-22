@@ -34,6 +34,13 @@ public:
             const std::vector<std::string>& allFinals,
             const HGUIConfig& cfg);
 
+    int run(SDL_Window* externalWindow,
+            SDL_Renderer* externalRenderer,
+            HGCore& core,
+            const std::vector<std::string>& allInitials,
+            const std::vector<std::string>& allFinals,
+            const HGUIConfig& cfg);
+
 private:
     enum class Screen {
         DifficultySelect,
@@ -55,7 +62,9 @@ private:
     };
 
 private:
-    bool initSDL_(const HGUIConfig& cfg, std::string& err);
+    bool initSDL_(const HGUIConfig& cfg, std::string& err,
+                  SDL_Window* externalWindow = nullptr,
+                  SDL_Renderer* externalRenderer = nullptr);
     void shutdown_();
 
     void computeLayout_(int w, int h);
@@ -89,6 +98,14 @@ private:
     void drawPlayingScreen_(HGCore& core,
                             const std::vector<std::string>& allInitials,
                             const std::vector<std::string>& allFinals);
+    void drawSelectedBg_(const SDL_Rect& r);
+    void drawTextureOrText_(SDL_Texture* texture, const SDL_Rect& r, const std::string& fallbackText);
+    void updatePlayingHover_(int mx, int my);
+    void resetPlayingHover_();
+
+    void updateDifficultyLayout_(int w, int h);
+    void loadDifficultySelectionResources_(const HGUIConfig& cfg, const std::string& chosenFontPath);
+    void destroyDifficultySelectionResources_();
 
     // ====== tone toggle switch ======
     void toggleToneMode_();
@@ -104,9 +121,23 @@ private:
     SDL_Renderer* ren_ = nullptr;
     bool ownsSDL_ = false;
     bool ownsTTF_ = false;
+    bool ownsIMG_ = false;
+    bool ownsWindowRenderer_ = true;
 
     TTF_Font* fontHanzi_ = nullptr;
     TTF_Font* fontPinyin_ = nullptr;
+    TTF_Font* fontSubmit_ = nullptr;
+    TTF_Font* fontCellHanzi_ = nullptr;
+    TTF_Font* fontDifficultyCaption_ = nullptr;
+    TTF_Font* fontDifficultyButton_ = nullptr;
+
+    SDL_Texture* difficultySelectionBgTexture_ = nullptr;
+    SDL_Texture* difficultySelectedBgTexture_ = nullptr;
+    SDL_Texture* difficultyBackIconTexture_ = nullptr;
+    SDL_Texture* gameQuitIconTexture_ = nullptr;
+    SDL_Texture* gameBackDifficultyIconTexture_ = nullptr;
+    SDL_Texture* gameTipsIconTexture_ = nullptr;
+    SDL_Texture* hintCloseIconTexture_ = nullptr;
 
     // 状态
     Screen screen_ = Screen::DifficultySelect;
@@ -115,6 +146,18 @@ private:
     std::string composing_;
     int guessScroll_ = 0;
     int chartScroll_ = 0;
+    int difficultySelectedIndex_ = 0;
+    int difficultyHoveredIndex_ = -1;
+    bool difficultyBackHovered_ = false;
+
+    bool playingQuitHovered_ = false;
+    bool playingBackDifficultyHovered_ = false;
+    bool playingTipsHovered_ = false;
+    bool submitHovered_ = false;
+    bool toneNumberHovered_ = false;
+    bool toneMarkHovered_ = false;
+    bool hintCloseHovered_ = false;
+    bool hintMoreHovered_ = false;
 
     ToneDisplayMode toneMode_ = ToneDisplayMode::Number;
     bool toneMarkAvailable_ = false;
@@ -130,9 +173,29 @@ private:
     SDL_Rect btnExitGame_{};
     SDL_Rect btnHint_{};
 
+    SDL_Rect gameQuitIconRect_{};
+    SDL_Rect gameBackDifficultyIconRect_{};
+    SDL_Rect gameTipsIconRect_{};
+    SDL_Rect gameQuitHighlightRect_{};
+    SDL_Rect gameBackDifficultyHighlightRect_{};
+    SDL_Rect gameTipsHighlightRect_{};
+    SDL_Rect toneNumberTextRect_{};
+    SDL_Rect toneMarkTextRect_{};
+    SDL_Rect toneNumberHighlightRect_{};
+    SDL_Rect toneMarkHighlightRect_{};
+    SDL_Rect submitTextRect_{};
+    SDL_Rect submitHitRect_{};
+    SDL_Rect submitHighlightRect_{};
+
     SDL_Rect btnEasy_{};
     SDL_Rect btnNormal_{};
     SDL_Rect btnHard_{};
+    SDL_Rect difficultySelectionBgRect_{};
+    SDL_Rect difficultyBackIconRect_{};
+    SDL_Rect difficultyBackHitRect_{};
+    SDL_Rect difficultyBackHighlightRect_{};
+    std::array<SDL_Rect, 3> difficultyTextRects_{};
+    std::array<SDL_Rect, 3> difficultyHitRects_{};
 
     // 顶部音调切换开关
     SDL_Rect toneToggle_{};
@@ -142,6 +205,8 @@ private:
     SDL_Rect hintBox_{};
     SDL_Rect hintClose_{};
     SDL_Rect hintMore_{};
+    SDL_Rect hintCloseHighlightRect_{};
+    SDL_Rect hintMoreHighlightRect_{};
 
     // Random
     std::mt19937 rng_{};

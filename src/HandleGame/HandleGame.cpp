@@ -25,6 +25,10 @@ static std::string pickFirstExisting(const std::vector<std::string>& candidates)
 }
 
 int start() {
+    return start(nullptr, nullptr);
+}
+
+int start(SDL_Window* externalWindow, SDL_Renderer* externalRenderer) {
     HGEngine engine;
 
     // data: 你指定的目录（按难度分别加载不同 tsv）
@@ -64,6 +68,9 @@ int start() {
     const auto& finals   = kStdFinals;
 
     const std::vector<std::string> fontCandidates = {
+        "assets/HandleGame/font/font3.ttf",
+        "assets/HandleGame/font/font2.ttf",
+        "assets/HandleGame/font/font1.ttf",
         "C:/Windows/Fonts/simkai.ttf",
         "C:/Windows/Fonts/msyh.ttc",
         "C:/Windows/Fonts/msyhbd.ttc",
@@ -73,14 +80,14 @@ int start() {
 
     HGUI gui;
     HGUIConfig cfg;
-    cfg.windowTitle = "HandleGame(句读之间)";
+    cfg.windowTitle = "汉兜";
     cfg.width = 1200;
     cfg.height = 800;
     cfg.fontCandidates = fontCandidates;
     cfg.fontSize = 24;
     cfg.pinyinFontSize = 26;
 
-    return gui.run(core, initials, finals, cfg);
+    return gui.run(externalWindow, externalRenderer, core, initials, finals, cfg);
 }
 
 } // namespace HandleGame

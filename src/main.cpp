@@ -3,7 +3,12 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <stdexcept>
 #include <thread>
+
+#include <SDL.h>
+#include <SDL_image.h>
+#include <SDL_ttf.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -26,6 +31,19 @@ void showErrorDialog(const std::string& title, const std::string& message) {
     (void)message;
 #endif
 }
+
+SDL_Renderer* createRendererWithFallback(SDL_Window* window) {
+    SDL_Renderer* renderer = SDL_CreateRenderer(
+        window,
+        -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
+    );
+    if (renderer != nullptr) {
+        return renderer;
+    }
+    return SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+}
+
 
 lineverse::poetryrebuild::LevelMode toPoetryMode(
     lineverse::ui::HomepageModeChoice mode
@@ -58,28 +76,32 @@ lineverse::poetryrebuild::LevelDifficulty toPoetryDifficulty(
     }
 }
 
-int runHandleGame() {
-    return HandleGame::start();
+int runHandleGame(SDL_Window* window, SDL_Renderer* renderer) {
+    return HandleGame::start(window, renderer);
 }
 
 int runPoetryRebuildGame(
+    SDL_Window* window,
+    SDL_Renderer* renderer,
     lineverse::poetryrebuild::PoetryRebuildGame& game,
     const lineverse::ui::HomepageLaunchSelection& selection
 ) {
     return game.start(
+        window,
+        renderer,
         toPoetryMode(selection.mode),
         toPoetryDifficulty(selection.difficulty)
     );
 }
 
-int runIdiomChainGame() {
+int runIdiomChainGame(SDL_Window* window, SDL_Renderer* renderer) {
     IdiomChainGame game;
-    return game.start();
+    return game.start(window, renderer);
 }
 
-int runVerseUnfoldGame() {
+int runVerseUnfoldGame(SDL_Window* window, SDL_Renderer* renderer) {
     VerseUnfoldGame game;
-    return game.start();
+    return game.start(window, renderer);
 }
 
 bool handleGameResult(
@@ -118,6 +140,54 @@ int main() {
 #endif
 
     try {
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+            throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
+        }
+
+        const int imgFlags = IMG_INIT_PNG | IMG_INIT_JPG;
+        if ((IMG_Init(imgFlags) & imgFlags) != imgFlags) {
+            throw std::runtime_error(std::string("IMG_Init failed: ") + IMG_GetError());
+        }
+
+        if (TTF_Init() != 0) {
+            throw std::runtime_error(std::string("TTF_Init failed: ") + TTF_GetError());
+        }
+
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "2");
+        SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
+
+        SDL_Window* sharedWindow = SDL_CreateWindow(
+            "LineVerse",
+            SDL_WINDOWPOS_CENTERED,
+            SDL_WINDOWPOS_CENTERED,
+            1200,
+            800,
+            SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        );
+        if (sharedWindow == nullptr) {
+            throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
+        }
+
+        SDL_Renderer* sharedRenderer = createRendererWithFallback(sharedWindow);
+        if (sharedRenderer == nullptr) {
+            SDL_DestroyWindow(sharedWindow);
+            throw std::runtime_error(std::string("SDL_CreateRenderer failed: ") + SDL_GetError());
+        }
+
+        auto cleanupSharedSdl = [&]() {
+            if (sharedRenderer != nullptr) {
+                SDL_DestroyRenderer(sharedRenderer);
+                sharedRenderer = nullptr;
+            }
+            if (sharedWindow != nullptr) {
+                SDL_DestroyWindow(sharedWindow);
+                sharedWindow = nullptr;
+            }
+            TTF_Quit();
+            IMG_Quit();
+            SDL_Quit();
+        };
+
         const auto paths = lineverse::poetryrebuild::ProjectPaths::detect();
 
         lineverse::poetryrebuild::PoetryRebuildGame poetryGame;
@@ -146,12 +216,13 @@ int main() {
             );
 
             lineverse::ui::HomepageLaunchSelection selection;
-            const int homepageResult = homepage.show(selection);
+            const int homepageResult = homepage.show(sharedWindow, sharedRenderer, selection);
 
             if (homepageResult != lineverse::ui::HomepageScreen::kResultLaunch) {
                 if (preloadThread.joinable()) {
                     preloadThread.join();
                 }
+                cleanupSharedSdl();
                 return 0;
             }
 
@@ -163,9 +234,10 @@ int main() {
                     preloadThread.join();
                 }
 
-                gameResult = runHandleGame();
+                gameResult = runHandleGame(sharedWindow, sharedRenderer);
 
                 if (!handleGameResult("HandleGame", gameResult)) {
+                    cleanupSharedSdl();
                     return gameResult == -1 ? 1 : 0;
                 }
 
@@ -182,9 +254,10 @@ int main() {
                     preloadThread.join();
                 }
 
-                gameResult = runPoetryRebuildGame(poetryGame, selection);
+                gameResult = runPoetryRebuildGame(sharedWindow, sharedRenderer, poetryGame, selection);
 
                 if (!handleGameResult("PoetryRebuildGame", gameResult)) {
+                    cleanupSharedSdl();
                     return gameResult == -1 ? 1 : 0;
                 }
 
@@ -195,9 +268,10 @@ int main() {
                     preloadThread.join();
                 }
 
-                gameResult = runIdiomChainGame();
+                gameResult = runIdiomChainGame(sharedWindow, sharedRenderer);
 
                 if (!handleGameResult("IdiomChainGame", gameResult)) {
+                    cleanupSharedSdl();
                     return gameResult == -1 ? 1 : 0;
                 }
 
@@ -208,9 +282,10 @@ int main() {
                     preloadThread.join();
                 }
 
-                gameResult = runVerseUnfoldGame();
+                gameResult = runVerseUnfoldGame(sharedWindow, sharedRenderer);
 
                 if (!handleGameResult("VerseUnfoldGame", gameResult)) {
+                    cleanupSharedSdl();
                     return gameResult == -1 ? 1 : 0;
                 }
 

@@ -11,8 +11,9 @@ VerseUnfoldAssets::~VerseUnfoldAssets() {
         }
     }
     fonts.clear();
-    if (TTF_WasInit()) {
+    if (ownsTTF) {
         TTF_Quit();
+        ownsTTF = false;
     }
 }
 
@@ -37,9 +38,12 @@ bool VerseUnfoldAssets::loadFontsFromPath(const std::string& path) {
 }
 
 bool VerseUnfoldAssets::load() {
-    if (TTF_Init() == -1) {
-        std::cerr << "[VerseUnfoldAssets] TTF_Init failed: " << TTF_GetError() << std::endl;
-        return false;
+    if (TTF_WasInit() == 0) {
+        if (TTF_Init() == -1) {
+            std::cerr << "[VerseUnfoldAssets] TTF_Init failed: " << TTF_GetError() << std::endl;
+            return false;
+        }
+        ownsTTF = true;
     }
 
     for (const auto& candidate : fontCandidates) {

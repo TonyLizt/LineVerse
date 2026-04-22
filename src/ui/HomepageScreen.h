@@ -2,6 +2,9 @@
 
 #include <filesystem>
 
+struct SDL_Window;
+struct SDL_Renderer;
+
 namespace lineverse::ui {
 
 enum class HomepageTargetGame {
@@ -39,6 +42,7 @@ public:
 
     explicit HomepageScreen(const std::filesystem::path& gifPath);
     int show(HomepageLaunchSelection& selection);
+    int show(SDL_Window* externalWindow, SDL_Renderer* externalRenderer, HomepageLaunchSelection& selection);
 
 private:
     std::filesystem::path gifPath_;

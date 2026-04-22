@@ -13,15 +13,20 @@
 
 #include <memory>
 
+struct SDL_Window;
+struct SDL_Renderer;
+
 class IdiomChainGame {
 public:
     int start();
+    int start(SDL_Window* externalWindow, SDL_Renderer* externalRenderer);
 
 private:
     int loadAssets();
     int loadData();
     int initGame();
     int gameLoop();
+    int gameLoop(SDL_Window* externalWindow, SDL_Renderer* externalRenderer);
     int saveResult();
     void cleanup();
 

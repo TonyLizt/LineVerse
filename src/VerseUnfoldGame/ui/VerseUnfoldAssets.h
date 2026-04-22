@@ -41,6 +41,7 @@ private:
     "build/bin/assets/VerseUnfoldGame/font/simsun.ttc"
     };
     std::string resolvedFontPath;
+    bool ownsTTF = false;
 };
 
 } // namespace VerseUnfold

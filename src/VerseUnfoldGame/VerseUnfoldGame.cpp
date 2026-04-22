@@ -24,6 +24,10 @@ VerseUnfoldGame::VerseUnfoldGame()
 VerseUnfoldGame::~VerseUnfoldGame() = default;
 
 int VerseUnfoldGame::start() {
+    return start(nullptr, nullptr);
+}
+
+int VerseUnfoldGame::start(SDL_Window* externalWindow, SDL_Renderer* externalRenderer) {
     const std::string resolvedDbPath = resolveExistingPath({
         dbPath,
         "../" + dbPath,
@@ -38,7 +42,7 @@ int VerseUnfoldGame::start() {
     }
 
     VerseUnfold::VerseUnfoldSDLApp app(controller);
-    if (!app.init()) {
+    if (!app.init(externalWindow, externalRenderer)) {
         std::cerr << "[VerseUnfoldGame] Failed to initialize SDL App." << std::endl;
         return -1;
     }

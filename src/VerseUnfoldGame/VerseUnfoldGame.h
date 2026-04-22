@@ -3,6 +3,9 @@
 #include <memory>
 #include <string>
 
+struct SDL_Window;
+struct SDL_Renderer;
+
 #include "controller/PoetryGameController.h"
 
 class VerseUnfoldGame {
@@ -11,6 +14,7 @@ public:
     ~VerseUnfoldGame();
 
     int start();
+    int start(SDL_Window* externalWindow, SDL_Renderer* externalRenderer);
 
 private:
     std::shared_ptr<PoetryGameController> controller;

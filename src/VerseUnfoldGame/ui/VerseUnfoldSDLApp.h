@@ -19,6 +19,7 @@ public:
     ~VerseUnfoldSDLApp();
 
     bool init();
+    bool init(SDL_Window* externalWindow, SDL_Renderer* externalRenderer);
     int run();
     void cleanup();
 
@@ -37,6 +38,8 @@ private:
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     bool isRunning = false;
+    bool ownsWindowRenderer = true;
+    bool ownsSDL = false;
 
     std::shared_ptr<PoetryGameController> controller;
     std::unique_ptr<VerseUnfoldAssets> assets;

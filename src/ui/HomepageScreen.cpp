@@ -389,6 +389,12 @@ HomepageScreen::HomepageScreen(const fs::path& gifPath)
 }
 
 int HomepageScreen::show(HomepageLaunchSelection& selection) {
+    return show(nullptr, nullptr, selection);
+}
+
+int HomepageScreen::show(SDL_Window* externalWindow,
+                         SDL_Renderer* externalRenderer,
+                         HomepageLaunchSelection& selection) {
     selection = HomepageLaunchSelection{};
 
     if (!fs::exists(gifPath_)) {
@@ -419,17 +425,20 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
     bool sdlInited = false;
     bool imageInited = false;
     bool ttfInited = false;
+    const bool externalContext = (externalWindow != nullptr && externalRenderer != nullptr);
 
     try {
-        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+        if (!externalContext && SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
             throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
         }
-        sdlInited = true;
+        sdlInited = !externalContext;
 
-        if (TTF_Init() != 0) {
-            throw std::runtime_error(std::string("TTF_Init failed: ") + TTF_GetError());
+        if (TTF_WasInit() == 0) {
+            if (TTF_Init() != 0) {
+                throw std::runtime_error(std::string("TTF_Init failed: ") + TTF_GetError());
+            }
+            ttfInited = true;
         }
-        ttfInited = true;
 
         int imgFlags = 0;
         std::string ext = gifPath_.extension().string();
@@ -446,41 +455,55 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
         }
 
         if (imgFlags != 0) {
-            if ((IMG_Init(imgFlags) & imgFlags) != imgFlags) {
-                throw std::runtime_error(std::string("IMG_Init failed: ") + IMG_GetError());
+            const int alreadyImgFlags = IMG_Init(0);
+            if ((alreadyImgFlags & imgFlags) != imgFlags) {
+                if ((IMG_Init(imgFlags) & imgFlags) != imgFlags) {
+                    throw std::runtime_error(std::string("IMG_Init failed: ") + IMG_GetError());
+                }
+                imageInited = true;
             }
-            imageInited = true;
         }
 
         int result = kResultExit;
 
         {
-            SdlWindowGuard window;
-            SdlRendererGuard renderer;
+            SdlWindowGuard ownedWindow;
+            SdlRendererGuard ownedRenderer;
+            SDL_Window* window = externalWindow;
+            SDL_Renderer* renderer = externalRenderer;
             SdlTextureGuard homeBgTexture;
             SdlTextureGuard selectionBgTexture;
             SdlTextureGuard selectedBgTexture;
 
-            window.ptr = SDL_CreateWindow(
-                "LineVerse",
-                SDL_WINDOWPOS_CENTERED,
-                SDL_WINDOWPOS_CENTERED,
-                kWindowWidth,
-                kWindowHeight,
-                SDL_WINDOW_SHOWN
-            );
-            if (window.ptr == nullptr) {
-                throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
-            }
+            if (!externalContext) {
+                ownedWindow.ptr = SDL_CreateWindow(
+                    "LineVerse",
+                    SDL_WINDOWPOS_CENTERED,
+                    SDL_WINDOWPOS_CENTERED,
+                    kWindowWidth,
+                    kWindowHeight,
+                    SDL_WINDOW_SHOWN
+                );
+                if (ownedWindow.ptr == nullptr) {
+                    throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
+                }
 
-            renderer.ptr = createRendererWithFallback(window.ptr);
-            if (renderer.ptr == nullptr) {
-                throw std::runtime_error(std::string("SDL_CreateRenderer failed: ") + SDL_GetError());
+                ownedRenderer.ptr = createRendererWithFallback(ownedWindow.ptr);
+                if (ownedRenderer.ptr == nullptr) {
+                    throw std::runtime_error(std::string("SDL_CreateRenderer failed: ") + SDL_GetError());
+                }
+
+                window = ownedWindow.ptr;
+                renderer = ownedRenderer.ptr;
+            } else {
+                SDL_SetWindowTitle(window, "LineVerse");
+                SDL_ShowWindow(window);
+                SDL_RaiseWindow(window);
             }
 
             SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "2");
 
-            homeBgTexture.ptr = IMG_LoadTexture(renderer.ptr, gifPath_.string().c_str());
+            homeBgTexture.ptr = IMG_LoadTexture(renderer, gifPath_.string().c_str());
             if (homeBgTexture.ptr == nullptr) {
                 throw std::runtime_error(
                     std::string("IMG_LoadTexture failed: ") + IMG_GetError() +
@@ -488,7 +511,7 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
                 );
             }
 
-            selectedBgTexture.ptr = IMG_LoadTexture(renderer.ptr, selectedBgPath.string().c_str());
+            selectedBgTexture.ptr = IMG_LoadTexture(renderer, selectedBgPath.string().c_str());
             if (selectedBgTexture.ptr == nullptr) {
                 throw std::runtime_error(
                     std::string("IMG_LoadTexture failed: ") + IMG_GetError() +
@@ -502,7 +525,7 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
             SDL_QueryTexture(homeBgTexture.ptr, nullptr, nullptr, &bgTexW, &bgTexH);
             const SDL_Rect homeBgRect = buildHomeBgRect(bgTexW, bgTexH);
 
-            selectionBgTexture.ptr = IMG_LoadTexture(renderer.ptr, selectionBgPath.string().c_str());
+            selectionBgTexture.ptr = IMG_LoadTexture(renderer, selectionBgPath.string().c_str());
             if (selectionBgTexture.ptr == nullptr) {
                 throw std::runtime_error(
                     std::string("IMG_LoadTexture failed: ") + IMG_GetError() +
@@ -545,7 +568,7 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
             }
 
             TextTexture titleText = createTextTexture(
-                renderer.ptr,
+                renderer,
                 titleFont.ptr,
                 u8"句读之间",
                 kTextColor
@@ -591,7 +614,7 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
             };
 
             PageLayout homeLayout = buildPageLayout(
-                renderer.ptr,
+                renderer,
                 captionFont.ptr,
                 buttonFont.ptr,
                 columnCenterX,
@@ -600,7 +623,7 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
                 homeLayoutSpec
             );
             PageLayout modeLayout = buildPageLayout(
-                renderer.ptr,
+                renderer,
                 captionFont.ptr,
                 selectionButtonFont.ptr,
                 kWindowWidth / 2,
@@ -609,7 +632,7 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
                 selectionLayoutSpec
             );
             PageLayout difficultyLayout = buildPageLayout(
-                renderer.ptr,
+                renderer,
                 captionFont.ptr,
                 selectionButtonFont.ptr,
                 kWindowWidth / 2,
@@ -805,16 +828,16 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
                     break;
                 }
 
-                SDL_SetRenderDrawColor(renderer.ptr, kBgColor.r, kBgColor.g, kBgColor.b, kBgColor.a);
-                SDL_RenderClear(renderer.ptr);
+                SDL_SetRenderDrawColor(renderer, kBgColor.r, kBgColor.g, kBgColor.b, kBgColor.a);
+                SDL_RenderClear(renderer);
 
                 const bool isSelectionPage =
                     (pageState == PageState::ModeSelect || pageState == PageState::DifficultySelect);
                 if (isSelectionPage) {
-                    SDL_RenderCopy(renderer.ptr, selectionBgTexture.ptr, nullptr, &selectionBgRect);
+                    SDL_RenderCopy(renderer, selectionBgTexture.ptr, nullptr, &selectionBgRect);
                 } else {
-                    SDL_RenderCopy(renderer.ptr, homeBgTexture.ptr, nullptr, &homeBgRect);
-                    SDL_RenderCopy(renderer.ptr, titleText.texture.ptr, nullptr, &titleRect);
+                    SDL_RenderCopy(renderer, homeBgTexture.ptr, nullptr, &homeBgRect);
+                    SDL_RenderCopy(renderer, titleText.texture.ptr, nullptr, &titleRect);
                 }
 
                 const double t = static_cast<double>(SDL_GetTicks());
@@ -828,7 +851,7 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
                 const int selectedIndex = currentSelectedIndex();
 
                 if (layout.captionText.texture.ptr != nullptr) {
-                    SDL_RenderCopy(renderer.ptr, layout.captionText.texture.ptr, nullptr, &layout.captionRect);
+                    SDL_RenderCopy(renderer, layout.captionText.texture.ptr, nullptr, &layout.captionRect);
                 }
 
                 for (std::size_t i = 0; i < layout.buttonTexts.size(); ++i) {
@@ -843,13 +866,13 @@ int HomepageScreen::show(HomepageLaunchSelection& selection) {
                         };
 
                         SDL_SetTextureAlphaMod(selectedBgTexture.ptr, breathAlpha);
-                        SDL_RenderCopy(renderer.ptr, selectedBgTexture.ptr, nullptr, &selectedBgRect);
+                        SDL_RenderCopy(renderer, selectedBgTexture.ptr, nullptr, &selectedBgRect);
                     }
 
-                    SDL_RenderCopy(renderer.ptr, layout.buttonTexts[i].texture.ptr, nullptr, &textRect);
+                    SDL_RenderCopy(renderer, layout.buttonTexts[i].texture.ptr, nullptr, &textRect);
                 }
 
-                SDL_RenderPresent(renderer.ptr);
+                SDL_RenderPresent(renderer);
             }
         }
 

@@ -303,7 +303,11 @@ IdiomChainScene::~IdiomChainScene() {
 }
 
 int IdiomChainScene::run() {
-    if (!initialize()) {
+    return run(nullptr, nullptr);
+}
+
+int IdiomChainScene::run(SDL_Window* externalWindow, SDL_Renderer* externalRenderer) {
+    if (!initialize(externalWindow, externalRenderer)) {
         return -1;
     }
 
@@ -375,34 +379,54 @@ int IdiomChainScene::run() {
     return resultCode;
 }
 
-bool IdiomChainScene::initialize() {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
-        return false;
+bool IdiomChainScene::initialize(SDL_Window* externalWindow, SDL_Renderer* externalRenderer) {
+    if ((SDL_WasInit(SDL_INIT_VIDEO | SDL_INIT_TIMER) & (SDL_INIT_VIDEO | SDL_INIT_TIMER)) !=
+        (SDL_INIT_VIDEO | SDL_INIT_TIMER)) {
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+            return false;
+        }
+        ownsSDL_ = true;
     }
-    if (TTF_Init() != 0) {
-        SDL_Quit();
-        return false;
+    if (TTF_WasInit() == 0) {
+        if (TTF_Init() != 0) {
+            if (ownsSDL_) {
+                SDL_Quit();
+                ownsSDL_ = false;
+            }
+            return false;
+        }
+        ownsTTF_ = true;
     }
     SDL_SetHint(SDL_HINT_IME_SHOW_UI, "1");
 
-    window_ = SDL_CreateWindow(
-        "LineVerse - IdiomChainGame",
-        SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED,
-        kWindowWidth,
-        kWindowHeight,
-        SDL_WINDOW_SHOWN
-    );
-    if (window_ == nullptr) {
-        return false;
-    }
+    if (externalWindow != nullptr && externalRenderer != nullptr) {
+        window_ = externalWindow;
+        renderer_ = externalRenderer;
+        ownsWindowRenderer_ = false;
+        SDL_SetWindowTitle(window_, "LineVerse - IdiomChainGame");
+        SDL_ShowWindow(window_);
+        SDL_RaiseWindow(window_);
+    } else {
+        ownsWindowRenderer_ = true;
+        window_ = SDL_CreateWindow(
+            "LineVerse - IdiomChainGame",
+            SDL_WINDOWPOS_CENTERED,
+            SDL_WINDOWPOS_CENTERED,
+            kWindowWidth,
+            kWindowHeight,
+            SDL_WINDOW_SHOWN
+        );
+        if (window_ == nullptr) {
+            return false;
+        }
 
-    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (renderer_ == nullptr) {
-        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
-    }
-    if (renderer_ == nullptr) {
-        return false;
+        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        if (renderer_ == nullptr) {
+            renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+        }
+        if (renderer_ == nullptr) {
+            return false;
+        }
     }
 
     return loadFonts();
@@ -432,19 +456,25 @@ void IdiomChainScene::shutdown() {
         TTF_CloseFont(titleFont_);
         titleFont_ = nullptr;
     }
-    if (renderer_ != nullptr) {
-        SDL_DestroyRenderer(renderer_);
-        renderer_ = nullptr;
+    if (ownsWindowRenderer_) {
+        if (renderer_ != nullptr) {
+            SDL_DestroyRenderer(renderer_);
+        }
+        if (window_ != nullptr) {
+            SDL_DestroyWindow(window_);
+        }
     }
-    if (window_ != nullptr) {
-        SDL_DestroyWindow(window_);
-        window_ = nullptr;
-    }
-    if (TTF_WasInit() != 0) {
+    renderer_ = nullptr;
+    window_ = nullptr;
+    ownsWindowRenderer_ = true;
+
+    if (ownsTTF_) {
         TTF_Quit();
+        ownsTTF_ = false;
     }
-    if (SDL_WasInit(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0U) {
+    if (ownsSDL_) {
         SDL_Quit();
+        ownsSDL_ = false;
     }
 }
 

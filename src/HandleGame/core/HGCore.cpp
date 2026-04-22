@@ -95,9 +95,9 @@ void HGCore::newGame(Difficulty diff, uint32_t seed) {
     }
 
     switch (diff) {
-    case Difficulty::Easy:   snap_.message = "简单模式"; break;
-    case Difficulty::Normal: snap_.message = "普通模式"; break;
-    case Difficulty::Hard:   snap_.message = "困难模式"; break;
+    case Difficulty::Easy:   snap_.message = ""; break;
+    case Difficulty::Normal: snap_.message = ""; break;
+    case Difficulty::Hard:   snap_.message = ""; break;
     }
 }
 

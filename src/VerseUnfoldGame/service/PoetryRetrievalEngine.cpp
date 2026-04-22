@@ -34,11 +34,6 @@ const std::vector<int>* queryFieldSet(const PoetryIndex& index, QueryField field
 }
 
 // ===================== 替换1：新增强弱字段判断函数 =====================
-bool isWeakGuessField(QueryField field) {
-    return field == QueryField::Dynasty ||
-           field == QueryField::Type ||
-           field == QueryField::Structure;
-}
 
 bool isGuessStrongField(QueryField field) {
     return field == QueryField::Author ||

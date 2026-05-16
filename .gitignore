@@ -44,3 +44,12 @@ records/
 puml/
 *.puml
 *.svg
+
+# Large generated/cache files
+data/cache/
+data/cache/**
+data/prebuild/PoetryRebuildGame/poems.json
+data/cache/PoetryRebuildGame/runtime/runtime_cache.bin
+
+# Optional: large raw/generated data
+*.bin

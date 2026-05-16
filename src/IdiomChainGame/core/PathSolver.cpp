@@ -17,6 +17,9 @@ PathResult PathSolver::solveShortestPath(int startId, int targetId) const {
     }
 
     const std::size_t n = graph_.size();
+    // dist[i]：起点到第 i 个成语的最短步数
+    // prev[i]：最短路径中，i 的前一个节点是谁
+    // pending：BFS 搜索队列
     std::vector<int> dist(n, -1);
     std::vector<int> prev(n, -1);
     std::queue<int> pending;
@@ -48,7 +51,7 @@ PathResult PathSolver::solveShortestPath(int startId, int targetId) const {
 
     result.reachable = true;
     result.stepCount = dist[static_cast<std::size_t>(targetId)];
-
+    // 根据 prev 回溯整条路径
     for (int at = targetId; at != -1; at = prev[static_cast<std::size_t>(at)]) {
         result.path.push_back(at);
     }
@@ -123,6 +126,7 @@ std::vector<PathResult> PathSolver::solveMultipleShortestPaths(int startId, int 
     return results;
 }
 
+// 求“所有节点 → 终点”的最短距离
 std::vector<int> PathSolver::computeDistanceToTarget(int targetId) const {
     const std::size_t n = graph_.size();
     std::vector<int> dist(n, -1);

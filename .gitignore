@@ -1,12 +1,46 @@
-# Ignore everything by default
-/*
+# Build output
+build/
+out/
+bin/
+Debug/
+Release/
+cmake-build-*/
 
-# Keep this file
-!/.gitignore
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
 
-# Keep CMake build script
-!/CMakeLists.txt
+# Object and temporary compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.pdb
 
-# Keep source directory and all contents
-!/src/
-!/src/**
+# Executable files
+*.exe
+
+# IDE files
+.vscode/
+.vs/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Runtime generated records
+records/
+*.csv.bak
+
+# PlantUML diagrams
+puml/
+*.puml
+*.svg

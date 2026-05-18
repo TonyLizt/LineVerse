@@ -1,9 +1,0 @@
-PoetryRebuildGame Summary
-poems=516320
-idioms=30884
-poemsOutput=D:\Code\C++\LineVerse\data\prebuild\PoetryRebuildGame\poems.json
-idiomsOutput=D:\Code\C++\LineVerse\data\prebuild\PoetryRebuildGame\idioms.json
-indexCount=547121
-skippedDuplicateTextCount=83
-conflictGraphBuilt=false
-indexReport=D:\Code\C++\LineVerse\data\cache\PoetryRebuildGame\index_report.json

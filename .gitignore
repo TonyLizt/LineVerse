@@ -53,3 +53,14 @@ data/cache/PoetryRebuildGame/runtime/runtime_cache.bin
 
 # Optional: large raw/generated data
 *.bin
+
+# Third-party libraries
+libs/
+
+# Generated / preprocessed data
+data/prebuild/
+data/cache/
+
+# Runtime output
+*.dll
+*.exe

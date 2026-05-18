@@ -33,19 +33,13 @@ int start(SDL_Window* externalWindow, SDL_Renderer* externalRenderer) {
 
     // data: 你指定的目录（按难度分别加载不同 tsv）
     const std::vector<std::string> easyCandidates = {
-        "data/prebuild/HandleGame/idioms_easy.tsv",
-        "../data/prebuild/HandleGame/idioms_easy.tsv",
-        "../../data/prebuild/HandleGame/idioms_easy.tsv"
+        "../../data/raw/HandleGame/idioms_easy.tsv"
     };
     const std::vector<std::string> normalCandidates = {
-        "data/prebuild/HandleGame/idioms_normal.tsv",
-        "../data/prebuild/HandleGame/idioms_normal.tsv",
-        "../../data/prebuild/HandleGame/idioms_normal.tsv"
+        "../../data/raw/HandleGame/idioms_normal.tsv"
     };
     const std::vector<std::string> hardCandidates = {
-        "data/prebuild/HandleGame/idioms_hard.tsv",
-        "../data/prebuild/HandleGame/idioms_hard.tsv",
-        "../../data/prebuild/HandleGame/idioms_hard.tsv"
+        "../../data/raw/HandleGame/idioms_hard.tsv"
     };
 
     const std::string easyPath = pickFirstExisting(easyCandidates);
@@ -53,7 +47,7 @@ int start(SDL_Window* externalWindow, SDL_Renderer* externalRenderer) {
     const std::string hardPath = pickFirstExisting(hardCandidates);
 
     if (easyPath.empty() || normalPath.empty() || hardPath.empty()) {
-        std::cerr << "[HandleGame] TSV not found. Expected under data/prebuild/HandleGame:\n"
+        std::cerr << "[HandleGame] TSV not found. Expected under data/raw/HandleGame:\n"
                   << "  idioms_easy.tsv (or idioms_easy.tsv)\n"
                   << "  idioms_normal.tsv\n"
                   << "  idioms_hard.tsv\n";
